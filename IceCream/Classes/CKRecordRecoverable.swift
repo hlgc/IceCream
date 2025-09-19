@@ -143,10 +143,39 @@ extension CKRecordRecoverable where Self: Object {
                     let ownerType = prop.objectClassName,
                     let schema = realm.schema.objectSchema.first(where: { $0.className == ownerType })
                 {
-                    primaryKeyForRecordID(recordID: owner.recordID, schema: schema).flatMap {
-                        recordValue = realm.dynamicObject(ofType: ownerType, forPrimaryKey: $0)
-                    }
+                    //                    primaryKeyForRecordID(recordID: owner.recordID, schema: schema).flatMap {
+                    //                        recordValue = realm.dynamicObject(ofType: ownerType, forPrimaryKey: $0)
+                    //                    }
                     // Because we use the primaryKey as recordName when object converting to CKRecord
+                    if let primaryKeyValue = primaryKeyForRecordID(recordID: owner.recordID, schema: schema) as? AnyHashable {
+                        if schema.className == U.className() {
+                            if let existObject = realm.object(ofType: U.self, forPrimaryKey: primaryKeyValue) {
+                                recordValue = existObject
+                            } else {
+                                pendingUTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
+                            }
+                        }
+                        
+                        if schema.className == V.className() {
+                            if let existObject = realm.object(ofType: V.self, forPrimaryKey: primaryKeyValue) {
+                                recordValue = existObject
+                            } else {
+                                pendingVTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
+                            }
+                        }
+                        
+                        if schema.className == W.className() {
+                            if let existObject = realm.object(ofType: W.self, forPrimaryKey: primaryKeyValue) {
+                                recordValue = existObject
+                            } else {
+                                pendingWTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
+                            }
+                        }
+                        
+                        if schema.className != U.className() && schema.className == V.className() && schema.className == W.className() {
+                            recordValue = realm.dynamicObject(ofType: ownerType, forPrimaryKey: primaryKeyValue)
+                        }
+                    }
                 }
             default:
                 print("Other types will be supported in the future.")

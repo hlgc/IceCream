@@ -26,14 +26,20 @@ final class PendingRelationshipsWorker<Element: Object> {
         }
         BackgroundWorker.shared.start {
             for (primaryKeyValue, (propName, owner)) in self.pendingListElementPrimaryKeyValue {
-                guard let list = owner.value(forKey: propName) as? List<Element> else { return }
-                if let existListElementObject = realm.object(ofType: Element.self, forPrimaryKey: primaryKeyValue) {
+                if let list = owner.value(forKey: propName) as? List<Element> {
+                    if let existListElementObject = realm.object(ofType: Element.self, forPrimaryKey: primaryKeyValue) {
+                        try! realm.write {
+                            list.append(existListElementObject)
+                        }
+                        self.pendingListElementPrimaryKeyValue[primaryKeyValue] = nil
+                    } else {
+                        print("Cannot find existing resolving record in Realm")
+                    }
+                } else if let existListElementObject = realm.object(ofType: Element.self, forPrimaryKey: primaryKeyValue) {
                     try! realm.write {
-                        list.append(existListElementObject)
+                        owner.setValue(existListElementObject, forKey: propName)
                     }
                     self.pendingListElementPrimaryKeyValue[primaryKeyValue] = nil
-                } else {
-                    print("Cannot find existing resolving record in Realm")
                 }
             }
         }
