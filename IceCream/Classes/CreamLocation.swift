@@ -1,6 +1,6 @@
 //
 //  File.swift
-//  
+//
 //
 //  Created by Yue Cai on 2022/1/6.
 //
@@ -20,7 +20,7 @@ public class CreamLocation: Object {
         self.longitude = longitude
     }
     
-    // MARK: - Used in CKRecordConvertible
+    // MARK: - 用于CKRecordConvertible可改变的
     
     var location: CLLocation {
         get {
@@ -28,7 +28,7 @@ public class CreamLocation: Object {
         }
     }
     
-    // MARK: - Used in CKRecordRecoverable
+    // MARK: - 用于CKRecordRecoverable可恢复的
     
     static func make(location: CLLocation) -> CreamLocation {
         return CreamLocation(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)

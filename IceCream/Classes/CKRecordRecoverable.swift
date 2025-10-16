@@ -156,7 +156,7 @@ extension CKRecordRecoverable where Self: Object {
                             }
                         }
                     }
-                    // Because we use the primaryKey as recordName when object converting to CKRecord
+                    // 因为当对象转换为CKRecord时，我们使用主键作为recordName
                 }
             default:
                 print("Other types will be supported in the future.")
@@ -168,11 +168,11 @@ extension CKRecordRecoverable where Self: Object {
         return o
     }
     
-    /// The primaryKey in Realm could be type of Int or String. However the `recordName` is a String type, we need to make a check.
-    /// The reversed process happens in `recordID` property in `CKRecordConvertible` protocol.
+    /// Realm中的primaryKey可以是Int或String类型。然而,“记录名”是一个字符串类型，我们需要进行检查。
+    /// 相反的过程发生在“CKRecordConvertible”协议的“recordID”属性中。
     ///
-    /// - Parameter recordID: the recordID that CloudKit sent to us
-    /// - Returns: the specific value of primaryKey in Realm
+    /// - 参数recordID:cloud kit发送给我们的recordID
+    /// - 返回:领域中primaryKey的特定值
     static func primaryKeyForRecordID(recordID: CKRecord.ID, schema: ObjectSchema? = nil) -> Any? {
         let schema = schema ?? Self().objectSchema
         guard let objectPrimaryKeyType = schema.primaryKeyProperty?.type else { return nil }
@@ -182,6 +182,7 @@ extension CKRecordRecoverable where Self: Object {
         case .int:
             return Int(recordID.recordName)
         default:
+            // 对象primaryKey的类型应该是String或Int
             fatalError("The type of object primaryKey should be String or Int")
         }
     }

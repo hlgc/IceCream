@@ -9,16 +9,16 @@ import Foundation
 import RealmSwift
 import CloudKit
 
-/// SyncObject is for each model you want to sync.
-/// Logically,
-/// 1. it takes care of the operations of CKRecordZone.
-/// 2. it detects the changeSets of Realm Database and directly talks to it.
-/// 3. it hands over to SyncEngine so that it can talk to CloudKit.
+/// SyncObject用于您想要同步的每个模型。
+/// 逻辑上，
+/// 1.它负责CKRecordZone的操作。
+/// 2.它检测领域数据库的变更集并直接与之对话。
+/// 3.它移交给SyncEngine，以便可以与CloudKit对话。
 
 public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible & CKRecordRecoverable, U: Object, V: Object, W: Object {
     
-    /// Notifications are delivered as long as a reference is held to the returned notification token. We should keep a strong reference to this token on the class registering for updates, as notifications are automatically unregistered when the notification token is deallocated.
-    /// For more, reference is here: https://realm.io/docs/swift/latest/#notifications
+    /// 只要持有对返回的通知令牌的引用，就会传递通知。我们应该在注册更新的类中保留对该令牌的强引用，因为当通知令牌被释放时，通知会自动取消注册。
+    /// 更多，参考在这里:https://realm.io/docs/swift/latest/#notifications
     private var notificationToken: NotificationToken?
     
     public var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID]) -> ())?
@@ -55,8 +55,8 @@ extension SyncObject: Syncable {
     
     public var zoneChangesToken: CKServerChangeToken? {
         get {
-            /// For the very first time when launching, the token will be nil and the server will be giving everything on the Cloud to client
-            /// In other situation just get the unarchive the data object
+            /// 第一次启动时，令牌为零，服务器将把云上的所有内容都交给客户端
+            /// 在其他情况下，只需将数据对象解归档
             guard let tokenData = UserDefaults.standard.object(forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value) as? Data else { return nil }
             return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
         }
@@ -98,7 +98,7 @@ extension SyncObject: Syncable {
             self.pendingVTypeRelationshipsWorker.realm = realm
             self.pendingWTypeRelationshipsWorker.realm = realm
             
-            /// If your model class includes a primary key, you can have Realm intelligently update or add objects based off of their primary key values using Realm().add(_:update:).
+            /// 如果您的模型类包含主键，您可以让Realm使用Realm()根据它们的主键值智能地更新或添加对象。添加(_:更新:)。
             /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
             realm.beginWrite()
             realm.add(object, update: .modified)
@@ -114,7 +114,7 @@ extension SyncObject: Syncable {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)
             guard let object = realm.object(ofType: T.self, forPrimaryKey: T.primaryKeyForRecordID(recordID: recordID)) else {
-                // Not found in local realm database
+                // 在本地数据库中找不到
                 return
             }
             CreamAsset.deleteCreamAssetFile(with: recordID.recordName)
@@ -128,8 +128,8 @@ extension SyncObject: Syncable {
         }
     }
     
-    /// When you commit a write transaction to a Realm, all other instances of that Realm will be notified, and be updated automatically.
-    /// For more: https://realm.io/docs/swift/latest/#writes
+    /// 当您向一个realm提交写事务时，该realm的所有其他实例都将得到通知，并自动更新。
+    /// 了解更多信息:https://realm.io/docs/swift/latest/#writes
     public func registerLocalDatabase() {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)

@@ -13,13 +13,13 @@ import CloudKit
 let ASSET_EXTENSION = "asset_extension"
 let ASSET_SHOULD_OVERWRITE = "asset_shouldOvertwrite"
 
-/// If you want to store and sync big data automatically, then using CreamAsset might be a good choice.
-/// According to Apple https://developer.apple.com/documentation/cloudkit/ckasset :
-/// "You can also use assets in places where the data you want to assign to a field is more than a few kilobytes in size. "
-/// And According to Realm https://realm.io/docs/objc/latest/#current-limitations :
-/// "Data and String properties cannot hold data exceeding 16MB in size. To store larger amounts of data, either break it up into 16MB chunks or store it directly on the file system, storing paths to these files in the Realm. An exception will be thrown at runtime if your app attempts to store more than 16MB in a single property."
-/// We choose the latter, that's storing it directly on the file system, storing paths to these files in the Realm.
-/// So this is the deal.
+/// 如果你想自动存储和同步大数据，那么使用CreamAsset可能是个不错的选择。
+/// 根据苹果公司的说法:https://developer.apple.com/documentation/cloudkit/ckasset
+/// "您还可以在要分配给字段的数据超过几千字节的地方使用资产。"
+/// 根据刚铎realm的说法:https://realm.io/docs/objc/latest/#current-limitations
+/// "数据和字符串属性不能容纳超过16MB的数据。要存储更大数量的数据，要么将其分成16MB的块，要么直接存储在文件系统上，在领域中存储这些文件的路径。如果您的应用程序试图在单个属性中存储超过16MB的内容，将在运行时引发异常。
+/// 我们选择后者，即直接存储在文件系统中，在领域中存储这些文件的路径。
+/// 所以这是交易。
 public class CreamAsset: Object {
     @Persisted private var uniqueFileName = ""
     @Persisted var fileExtension: String? = nil
@@ -41,21 +41,21 @@ public class CreamAsset: Object {
         }
     }
     
-    /// Use this method to fetch the underlying data of the CreamAsset
+    /// 使用此方法获取CreamAsset的基础数据
     public func storedData() -> Data? {
         return try? Data(contentsOf: filePath)
     }
     
-    /// Where the asset locates in the file system
+    /// 资产在文件系统中的位置
     public var filePath: URL {
         return CreamAsset.creamAssetDefaultURL().appendingPathComponent(uniqueFileName)
     }
     
-    /// Save the given data to local file system
-    /// - Parameters:
-    ///   - data: The data to save
-    ///   - path:
-    ///   - shouldOverwrite: Whether should overwrite current file existed at path or not.
+    /// 将给定的数据保存到本地文件系统
+    /// -参数:
+    /// -数据:要保存的数据
+    /// -路径:
+    /// - shouldOverwrite:是否应该覆盖路径中存在的当前文件。
     private static func save(data: Data, to path: String, shouldOverwrite: Bool) throws {
         let url = CreamAsset.creamAssetDefaultURL().appendingPathComponent(path)
         guard shouldOverwrite || !FileManager.default.fileExists(atPath: url.path) else { return }
@@ -64,19 +64,19 @@ public class CreamAsset: Object {
     
     // MARK: - CKRecordConvertible & CKRecordRecoverable
     
-    /// Wrap asset as CKAsset for uploading to CloudKit
+    /// 将资产包装为CKAsset以上传到CloudKit
     var asset: CKAsset {
         get {
             return CKAsset(fileURL: filePath)
         }
     }
     
-    /// Parses a CKRecord and CKAsset back into a CreamAsset
-    /// - Parameters:
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - record: The CKRecord where we will pull the record ID off of to locate/store the file
-    ///   - asset: The CKAsset where we will pull the URL for creating the asset
-    /// - Returns: A CreamAsset if it was successful
+    /// 将CKRecord和CKAsset解析回CreamAsset
+    /// - 参数:
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - record:CKRecord，我们将从中提取记录ID来定位/存储文件
+    /// - asset:CKAsset，我们将从中提取用于创建资产的URL
+    /// - 返回:如果成功，则返回CreamAsset
     static func parse(from propName: String, record: CKRecord, asset: CKAsset) -> CreamAsset? {
         guard let url = asset.fileURL else { return nil }
         let fileExtension = record.value(forKey: ASSET_EXTENSION) as? String
@@ -90,14 +90,14 @@ public class CreamAsset: Object {
     
     // MARK: - Factory methods
     
-    /// Creates a new CreamAsset for the given object id with Data
+    /// 用数据为给定的对象id创建新的CreamAsset
     ///
-    /// - Parameters:
-    ///   - objectID: The objectID (key property of the Realm object) the asset will be identified by
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - data: The file data
-    ///   - shouldOverwrite: Whether to try and save the file even if an existing file exists for the same object ID.
-    /// - Returns: A CreamAsset if it was successful
+    /// - 参数:
+    /// - objectID:标识资产的objectID(领域对象的关键属性)
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - 数据:文件数据
+    /// - shouldOverwrite:即使存在具有相同对象ID的文件，是否尝试保存文件。
+    /// - 返回:如果成功，则返回CreamAsset
     public static func create(objectID: String, propName: String, data: Data, shouldOverwrite: Bool = true, fileExtension: String? = nil) -> CreamAsset? {
         let creamAsset = CreamAsset(objectID: objectID,
                                     propName: propName,
@@ -107,19 +107,19 @@ public class CreamAsset: Object {
             try save(data: data, to: creamAsset.uniqueFileName, shouldOverwrite: shouldOverwrite)
             return creamAsset
         } catch {
-            // Os.log error here
+            // 此处出现Os.log错误
             return nil
         }
     }
     
-    /// Creates a new CreamAsset for the given object with Data
+    /// 为带有数据的给定对象创建新的CreamAsset
     ///
-    /// - Parameters:
-    ///   - object: The object the asset will live on
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - data: The file data
-    ///   - shouldOverwrite: Whether to try and save the file even if an existing file exists for the same object.
-    /// - Returns: A CreamAsset if it was successful
+    /// - 参数:
+    /// - 对象:资产将存在于其上的对象
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - 数据:文件数据
+    /// - shouldOverwrite:即使同一个对象已有文件，是否尝试保存文件。
+    /// - 返回:如果成功，则返回CreamAsset
     public static func create(object: CKRecordConvertible, propName: String, data: Data, shouldOverwrite: Bool = true, fileExtension: String? = nil) -> CreamAsset? {
         return create(objectID: object.recordID.recordName,
                       propName: propName,
@@ -128,15 +128,15 @@ public class CreamAsset: Object {
                       fileExtension: fileExtension)
     }
     
-    /// Creates a new CreamAsset for the given object with a URL
+    /// 为具有URL的给定对象创建新的CreamAsset
     ///
-    /// - Parameters:
-    ///   - object: The object the asset will live on
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - url: The URL where the file located
-    ///   - shouldOverwrite: Whether to try and save the file even if an existing file exists for the same object.
-    ///   - keepExtension: Whether the file extension should be preserved or not
-    /// - Returns: A CreamAsset if it was successful
+    /// - 参数:
+    /// - 对象:资产将存在于其上的对象
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - url:文件所在的url
+    /// - shouldOverwrite:即使同一个对象已有文件，是否尝试保存文件。
+    /// - keepExtension:是否应该保留文件扩展名
+    /// - 返回:如果成功，则返回CreamAsset
     public static func create(object: CKRecordConvertible, propName: String, url: URL, shouldOverwrite: Bool = true, keepExtension: Bool = false) -> CreamAsset? {
         return create(objectID: object.recordID.recordName,
                       propName: propName,
@@ -145,14 +145,14 @@ public class CreamAsset: Object {
                       fileExtension: keepExtension ? url.pathExtension : nil)
     }
     
-    /// Creates a new CreamAsset for the given objectID with a URL where asset locates
-    /// - Parameters:
-    ///   - objectID: The key to identify the object. Normally it's the recordName property of CKRecord.ID when recovering from CloudKit
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - url: The location where asset locates
-    ///   - shouldOverwrite: Whether to try and save the file even if an existing file exists for the same object.
-    ///   - keepExtension: Whether the file extension should be preserved or not
-    /// - Returns: The CreamAsset if creates successful
+    /// 使用资产所在的URL为给定的objectID创建新的CreamAsset
+    /// - 参数:
+    /// - objectID:标识对象的键。通常它是CKRecord的recordName属性。从CloudKit恢复时的ID
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - url:资产所在的位置
+    /// - shouldOverwrite:是否尝试保存文件，即使同一对象存在现有文件。
+    /// - keepExtension:是否应该保留文件扩展名
+    /// - 返回:如果创建成功，则返回CreamAsset
     public static func create(objectID: String, propName: String, url: URL, shouldOverwrite: Bool = true, keepExtension: Bool = false) -> CreamAsset? {
         return create(objectID: objectID,
                       propName: propName,
@@ -161,14 +161,14 @@ public class CreamAsset: Object {
                       fileExtension: keepExtension ? url.pathExtension : nil)
     }
     
-    /// Creates a new CreamAsset for the given objectID with a URL where asset locates
-    /// - Parameters:
-    ///   - objectID: The key to identify the object. Normally it's the recordName property of CKRecord.ID when recovering from CloudKit
-    ///   - propName: The unique property name to identify this asset. e.g.: Dog Object may have multiple CreamAsset properties, so we need unique `propName`s to identify these.
-    ///   - url: The location where asset locates
-    ///   - shouldOverwrite: Whether to try and save the file even if an existing file exists for the same object.
-    ///   - fileExtension: File extension to append to the filename
-    /// - Returns: The CreamAsset if creates successful
+    /// 使用资产所在的URL为给定的objectID创建新的CreamAsset
+    /// - 参数:
+    /// - objectID:标识对象的键。通常它是CKRecord的recordName属性。从CloudKit恢复时的ID
+    /// - propName:标识该资产的唯一属性名。例如:Dog对象可能有多个CreamAsset属性，因此我们需要唯一的“属性名”来标识这些属性。
+    /// - url:资产所在的位置
+    /// - shouldOverwrite:是否尝试保存文件，即使同一对象存在现有文件。
+    /// - fileExtension:附加到文件名的文件扩展名
+    /// - 返回:如果创建成功，则返回CreamAsset
     public static func create(objectID: String, propName: String, url: URL, shouldOverwrite: Bool = true, fileExtension: String? = nil) -> CreamAsset? {
         let creamAsset = CreamAsset(objectID: objectID, propName: propName, shouldOverwrite: shouldOverwrite, fileExtension: fileExtension)
         if shouldOverwrite {
@@ -191,7 +191,7 @@ public class CreamAsset: Object {
 }
 
 extension CreamAsset {
-    /// The default path for the storing of CreamAsset. That is:
+    /// 存储CreamAsset的默认路径。那就是:
     /// xxx/Document/CreamAsset/
     public static func creamAssetDefaultURL() -> URL {
         let documentDir = try! FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
@@ -206,7 +206,7 @@ extension CreamAsset {
         return commonAssetPath
     }
     
-    /// Fetch all CreamAsset files' path
+    /// 获取所有CreamAsset文件的路径
     public static func creamAssetFilesPaths() -> [String] {
         do {
             return try FileManager.default.contentsOfDirectory(atPath: CreamAsset.creamAssetDefaultURL().path)
@@ -216,7 +216,7 @@ extension CreamAsset {
         return [String]()
     }
     
-    /// Execute deletions
+    /// 执行删除
     private static func excecuteDeletions(in filesNames: [String]) {
         for fileName in filesNames {
             let absolutePath = CreamAsset.creamAssetDefaultURL().appendingPathComponent(fileName).path
@@ -228,7 +228,7 @@ extension CreamAsset {
         }
     }
     
-    /// When delete an object. We need to delete related CreamAsset files
+    /// 删除对象时。我们需要删除相关的CreamAsset文件
     public static func deleteCreamAssetFile(with id: String) {
         let needToDeleteCacheFiles = creamAssetFilesPaths().filter { $0.contains(id) }
         excecuteDeletions(in: needToDeleteCacheFiles)

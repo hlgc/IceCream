@@ -7,11 +7,11 @@
 
 import CloudKit
 
-/// SyncEngine talks to CloudKit directly.
-/// Logically,
-/// 1. it takes care of the operations of **CKDatabase**
-/// 2. it handles all of the CloudKit config stuffs, such as subscriptions
-/// 3. it hands over CKRecordZone stuffs to SyncObject so that it can have an effect on local Realm Database
+/// SyncEngine直接和CloudKit对话。
+/// 逻辑上，
+/// 1.它负责**CKDatabase**的操作
+/// 2.它处理所有的CloudKit配置，比如订阅
+/// 3.它把CKRecordZone的东西交给SyncObject，这样它就可以对本地领域数据库产生影响
 
 public final class SyncEngine {
     
@@ -70,15 +70,15 @@ public final class SyncEngine {
 // MARK: Public Method
 extension SyncEngine {
     
-    /// Fetch data on the CloudKit and merge with local
+    /// 获取CloudKit上的数据并与local合并
     ///
-    /// - Parameter completionHandler: Supported in the `privateCloudDatabase` when the fetch data process completes, completionHandler will be called. The error will be returned when anything wrong happens. Otherwise the error will be `nil`.
+    /// -参数completionHandler:在“privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
     public func pull(completionHandler: ((Error?) -> Void)? = nil) {
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
     
-    /// Push all existing local data to CloudKit
-    /// You should NOT to call this method too frequently
+    /// 将所有现有的本地数据推送到CloudKit
+    /// 您不应该过于频繁地调用此方法
     public func pushAll() {
         databaseManager.syncObjects.forEach { $0.pushLocalObjectsToCloudKit() }
     }
@@ -103,11 +103,11 @@ public enum IceCreamKey: String {
     }
 }
 
-/// Dangerous part:
-/// In most cases, you should not change the string value cause it is related to user settings.
-/// e.g.: the cloudKitSubscriptionID, if you don't want to use "private_changes" and use another string. You should remove the old subsription first.
-/// Or your user will not save the same subscription again. So you got trouble.
-/// The right way is remove old subscription first and then save new subscription.
+///危险部分:
+/// 在大多数情况下，您不应该更改字符串值，因为它与用户设置有关。
+/// 例如:cloudKitSubscriptionID，如果不想使用“private_changes”而使用另一个字符串。你应该先删除旧的订阅。
+/// 否则您的用户将不会再次保存同一个订阅。所以你有麻烦了。
+/// 正确的方法是先删除旧订阅，然后保存新订阅。
 public enum IceCreamSubscription: String, CaseIterable {
     case cloudKitPrivateDatabaseSubscriptionID = "private_changes"
     case cloudKitPublicDatabaseSubscriptionID = "cloudKitPublicDatabaseSubcriptionID"

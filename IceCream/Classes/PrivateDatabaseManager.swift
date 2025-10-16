@@ -29,7 +29,7 @@ final class PrivateDatabaseManager: DatabaseManager {
     func fetchChangesInDatabase(_ callback: ((Error?) -> Void)?) {
         let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseChangeToken)
         
-        /// Only update the changeToken when fetch process completes
+        /// 仅在提取过程完成时更新changeToken
         changesOperation.changeTokenUpdatedBlock = { [weak self] newToken in
             self?.databaseChangeToken = newToken
         }
@@ -41,7 +41,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             switch ErrorHandler.shared.resultType(with: error) {
             case .success:
                 self.databaseChangeToken = newToken
-                // Fetch the changes in zone level
+                // 获取区域级别的更改
                 self.fetchChangesInZones(callback)
             case .retry(let timeToWait, _):
                 ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
@@ -50,7 +50,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .recoverableError(let reason, _):
                 switch reason {
                 case .changeTokenExpired:
-                    /// The previousServerChangeToken value is too old and the client must re-sync from scratch
+                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
                     self.databaseChangeToken = nil
                     self.fetchChangesInDatabase(callback)
                 default:
@@ -76,8 +76,8 @@ final class PrivateDatabaseManager: DatabaseManager {
                 self.syncObjects.forEach { object in
                     object.isCustomZoneCreated = true
                     
-                    // As we register local database in the first step, we have to force push local objects which
-                    // have not been caught to CloudKit to make data in sync
+                    // 当我们在第一步注册本地数据库时，我们必须强制推送本地对象
+                    // 还没有被捕获到CloudKit中使数据同步
                     DispatchQueue.main.async {
                         object.pushLocalObjectsToCloudKit()
                     }
@@ -100,7 +100,7 @@ final class PrivateDatabaseManager: DatabaseManager {
         let subscription = CKDatabaseSubscription(subscriptionID: IceCreamSubscription.cloudKitPrivateDatabaseSubscriptionID.id)
         
         let notificationInfo = CKSubscription.NotificationInfo()
-        notificationInfo.shouldSendContentAvailable = true // Silent Push
+        notificationInfo.shouldSendContentAvailable = true // 无声推送
         
         subscription.notificationInfo = notificationInfo
         
@@ -145,8 +145,8 @@ final class PrivateDatabaseManager: DatabaseManager {
         }
         
         changesOp.recordChangedBlock = { [weak self] record in
-            /// The Cloud will return the modified record since the last zoneChangesToken, we need to do local cache here.
-            /// Handle the record:
+            /// 云端会返回上次zoneChangesToken以来修改的记录，这里需要做本地缓存。
+            /// 处理记录:
             guard let self = self else { return }
             guard let syncObject = self.syncObjects.first(where: { $0.recordType == record.recordType }) else { return }
             syncObject.add(record: record)
@@ -171,7 +171,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .recoverableError(let reason, _):
                 switch reason {
                 case .changeTokenExpired:
-                    /// The previousServerChangeToken value is too old and the client must re-sync from scratch
+                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
                     guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
                     syncObject.zoneChangesToken = nil
                     self.fetchChangesInZones(callback)
@@ -196,11 +196,11 @@ final class PrivateDatabaseManager: DatabaseManager {
 }
 
 extension PrivateDatabaseManager {
-    /// The changes token, for more please reference to https://developer.apple.com/videos/play/wwdc2016/231/
+    /// 更改令牌，更多信息请参考 https://developer.apple.com/videos/play/wwdc2016/231/
     var databaseChangeToken: CKServerChangeToken? {
         get {
-            /// For the very first time when launching, the token will be nil and the server will be giving everything on the Cloud to client
-            /// In other situation just get the unarchive the data object
+            /// 第一次启动时，令牌为零，服务器将把云上的所有内容都交给客户端
+            /// 在其他情况下，只需将数据对象解归档
             guard let tokenData = UserDefaults.standard.object(forKey: IceCreamKey.databaseChangesTokenKey.value) as? Data else { return nil }
             return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
         }

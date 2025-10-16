@@ -9,10 +9,10 @@ import CloudKit
 
 protocol DatabaseManager: AnyObject {
     
-    /// A conduit for accessing and performing operations on the data of an app container.
+    /// 用于访问应用程序容器的数据并对其执行操作的管道。
     var database: CKDatabase { get }
     
-    /// An encapsulation of content associated with an app.
+    /// 与应用程序相关的内容封装。
     var container: CKContainer { get }
     
     var syncObjects: [Syncable] { get }
@@ -23,13 +23,13 @@ protocol DatabaseManager: AnyObject {
     
     func fetchChangesInDatabase(_ callback: ((Error?) -> Void)?)
     
-    /// The CloudKit Best Practice is out of date, now use this:
+    /// cloud kit最佳实践已过时，现在使用:
     /// https://developer.apple.com/documentation/cloudkit/ckoperation
-    /// Which problem does this func solve? E.g.:
-    /// 1.(Offline) You make a local change, involve a operation
-    /// 2. App exits or ejected by user
-    /// 3. Back to app again
-    /// The operation resumes! All works like a magic!
+    /// 这个func解决的是哪个问题？例如:
+    /// 1.(离线)你做了一个局部的改变，涉及到一个操作
+    /// 2.应用程序退出或被用户弹出
+    /// 3.再次返回应用程序
+    /// 操作恢复！所有工作都像魔术一样！
     func resumeLongLivedOperationIfPossible()
     
     func createCustomZonesIfAllowed()
@@ -62,10 +62,10 @@ extension DatabaseManager {
                         modifyOp.modifyRecordsCompletionBlock = { (_,_,_) in
                             print("Resume modify records success!")
                         }
-                        // The Apple's example code in doc(https://developer.apple.com/documentation/cloudkit/ckoperation/#1666033)
-                        // tells we add operation in container. But however it crashes on iOS 15 beta versions.
-                        // And the crash log tells us to "CKDatabaseOperations must be submitted to a CKDatabase".
-                        // So I guess there must be something changed in the daemon. We temperorily add this availabilty check.
+                        // doc中的苹果示例代码(https://developer.apple.com/documentation/cloudkit/ckoperation/#1666033)
+                        // 告诉我们在容器中添加操作。但无论如何，它在iOS 15测试版上崩溃了。
+                        // 而崩溃日志告诉我们“CKDatabaseOperations必须提交给CKDatabase”。
+                        // 所以我猜守护进程里肯定有什么东西变了。我们临时添加了这个可用性检查。
                         if #available(iOS 15, *) {
                             self.database.add(modifyOp)
                         } else {
@@ -86,8 +86,8 @@ extension DatabaseManager {
         })
     }
     
-    /// Sync local data to CloudKit
-    /// For more about the savePolicy: https://developer.apple.com/documentation/cloudkit/ckrecordsavepolicy
+    /// 将本地数据同步到CloudKit
+    /// 有关保存策略的更多信息: https://developer.apple.com/documentation/cloudkit/ckrecordsavepolicy
     public func syncRecordsToCloudKit(recordsToStore: [CKRecord], recordIDsToDelete: [CKRecord.ID], completion: ((Error?) -> ())? = nil) {
         let modifyOpe = CKModifyRecordsOperation(recordsToSave: recordsToStore, recordIDsToDelete: recordIDsToDelete)
         
@@ -100,13 +100,13 @@ extension DatabaseManager {
             modifyOpe.isLongLived = true
         }
         
-        // We use .changedKeys savePolicy to do unlocked changes here cause my app is contentious and off-line first
-        // Apple suggests using .ifServerRecordUnchanged save policy
-        // For more, see Advanced CloudKit(https://developer.apple.com/videos/play/wwdc2014/231/)
+        // 我们使用。已更改密钥保存策略在此进行未锁定的更改，因为我的应用程序是有争议的，首先离线
+        // 苹果建议使用。ifServerRecordUnchanged保存策略
+        // 如需详细资讯，请参阅进阶云端套件(https://developer.apple.com/videos/play/wwdc2014/231/)
         modifyOpe.savePolicy = .changedKeys
         
-        // To avoid CKError.partialFailure, make the operation atomic (if one record fails to get modified, they all fail)
-        // If you want to handle partial failures, set .isAtomic to false and implement CKOperationResultType .fail(reason: .partialFailure) where appropriate
+        // 为了避免CKError.partialFailure，请使操作原子化(如果一条记录未能被修改，则所有记录都将失败)
+        // 如果要处理部分失败，请设置。isAtomic为false并实现CKOperationResultType。失败(原因:。部分故障)
         modifyOpe.isAtomic = true
         
         modifyOpe.modifyRecordsCompletionBlock = {
@@ -125,8 +125,8 @@ extension DatabaseManager {
                     self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, completion: completion)
                 }
             case .chunk:
-                /// CloudKit says maximum number of items in a single request is 400.
-                /// So I think 300 should be fine by them.
+                /// CloudKit规定单个请求中的最大项目数为400。
+                /// 所以我觉得300应该是他们没问题的。
 //                let chunkedRecords = recordsToStore.chunkItUp(by: 300)
 //                for chunk in chunkedRecords {
 //                    self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: recordIDsToDelete, completion: completion)

@@ -9,19 +9,19 @@ import Foundation
 import CloudKit
 import RealmSwift
 
-/// Since `sync` is an informal version of `synchronize`, so we choose the `syncable` word for
-/// the ability of synchronization.
+/// 因为‘sync’是‘synchronize’的非正式版本，所以我们选择‘syncable’一词来表示
+/// 同步的能力。
 public protocol Syncable: AnyObject {
     
-    /// CKRecordZone related
+    /// CKRecordZone相关
     var recordType: String { get }
     var zoneID: CKRecordZone.ID { get }
     
-    /// Local storage
+    /// 本地存储器
     var zoneChangesToken: CKServerChangeToken? { get set }
     var isCustomZoneCreated: Bool { get set }
     
-    /// Realm Database related
+    /// Realm数据库相关
     func registerLocalDatabase()
     func cleanUp()
     func add(record: CKRecord)
@@ -29,7 +29,7 @@ public protocol Syncable: AnyObject {
     
     func resolvePendingRelationships()
     
-    /// CloudKit related
+    /// CloudKit相关
     func pushLocalObjectsToCloudKit()
     
     /// Callback

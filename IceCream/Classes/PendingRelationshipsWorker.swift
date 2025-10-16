@@ -1,6 +1,6 @@
 //
 //  File.swift
-//  
+//
 //
 //  Created by Soledad on 2021/2/7.
 //
@@ -8,7 +8,7 @@
 import Foundation
 import RealmSwift
 
-/// PendingRelationshipsWorker is responsible for temporarily storing relationships when objects recovering from CKRecord
+/// 当对象从CKRecord中恢复时，PendingRelationshipsWorker负责临时存储关系
 final class PendingRelationshipsWorker<Element: Object> {
     
     var realm: Realm?
@@ -21,7 +21,7 @@ final class PendingRelationshipsWorker<Element: Object> {
     
     func resolvePendingListElements() {
         guard let realm = realm, pendingListElementPrimaryKeyValue.count > 0 else {
-            // Maybe we could add one log here
+            // 也许我们可以在这里添加一个日志
             return
         }
         BackgroundWorker.shared.start {
@@ -33,6 +33,7 @@ final class PendingRelationshipsWorker<Element: Object> {
                         }
                         self.pendingListElementPrimaryKeyValue[primaryKeyValue] = nil
                     } else {
+                        /// 在数据库中找不到现有的解析记录
                         print("Cannot find existing resolving record in Realm")
                     }
                 } else if let existListElementObject = realm.object(ofType: Element.self, forPrimaryKey: primaryKeyValue) {

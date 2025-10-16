@@ -38,18 +38,21 @@ extension CKRecordConvertible where Self: Object {
         case .public:
             return CKRecordZone.default().zoneID
         default:
+            /// 现在不支持共享数据库
             fatalError("Shared Database is not supported now")
         }
     }
     
-    /// recordName : this is the unique identifier for the record, used to locate records on the database. We can create our own ID or leave it to CloudKit to generate a random UUID.
-    /// For more: https://medium.com/@guilhermerambo/synchronizing-data-with-cloudkit-94c6246a3fda
+    /// recordName:这是记录的唯一标识符，用于在数据库中定位记录。我们可以创建自己的ID，或者让CloudKit生成一个随机的UUID。
+    /// 了解更多信息: https://medium.com/@guilhermerambo/synchronizing-data-with-cloudkit-94c6246a3fda
     public var recordID: CKRecord.ID {
         guard let sharedSchema = Self.sharedSchema() else {
+            // 没有解决的模式。去Realm社区寻求更多帮助。
             fatalError("No schema settled. Go to Realm Community to seek more help.")
         }
         
         guard let primaryKeyProperty = sharedSchema.primaryKeyProperty else {
+            // 您应该在领域对象上设置一个主键
             fatalError("You should set a primary key on your Realm object")
         }
         
@@ -57,26 +60,33 @@ extension CKRecordConvertible where Self: Object {
         case .string:
             if let primaryValueString = self[primaryKeyProperty.name] as? String {
                 // For more: https://developer.apple.com/documentation/cloudkit/ckrecord/id/1500975-init
+                /// CKRecord名称的主键必须只包含ASCII字符
                 assert(primaryValueString.allSatisfy({ $0.isASCII }), "Primary value for CKRecord name must contain only ASCII characters")
+                /// CKRecord名称的主键不得超过255个字符
                 assert(primaryValueString.count <= 255, "Primary value for CKRecord name must not exceed 255 characters")
+                /// CKRecord名称的主键不得以下划线开头
                 assert(!primaryValueString.starts(with: "_"), "Primary value for CKRecord name must not start with an underscore")
                 return CKRecord.ID(recordName: primaryValueString, zoneID: Self.zoneID)
             } else {
+                /// 值应为字符串类型
                 assertionFailure("\(primaryKeyProperty.name)'s value should be String type")
             }
         case .int:
             if let primaryValueInt = self[primaryKeyProperty.name] as? Int {
                 return CKRecord.ID(recordName: "\(primaryValueInt)", zoneID: Self.zoneID)
             } else {
+                /// 值应该是Int类型
                 assertionFailure("\(primaryKeyProperty.name)'s value should be Int type")
             }
         default:
+            /// 主键应该是字符串或整数
             assertionFailure("Primary key should be String or Int")
         }
+        /// 应该有合理的记录
         fatalError("Should have a reasonable recordID")
     }
     
-    // Simultaneously init CKRecord with zoneID and recordID, thanks to this guy: https://stackoverflow.com/questions/45429133/how-to-initialize-ckrecord-with-both-zoneid-and-recordid
+    // 感谢这个家伙，用zoneID和recordID同时初始化CKRecord: https://stackoverflow.com/questions/45429133/how-to-initialize-ckrecord-with-both-zoneid-and-recordid
     public var record: CKRecord {
         let r = CKRecord(recordType: Self.recordType, recordID: recordID)
         let properties = objectSchema.properties
@@ -115,9 +125,9 @@ extension CKRecordConvertible where Self: Object {
                     let array = Array(list)
                     r[prop.name] = array as CKRecordValue
                 case .object:
-                    /// We may get List<Cat> here
-                    /// The item cannot be casted as List<Object>
-                    /// It can be casted at a low-level type `RLMSwiftCollectionBase`
+                    /// 我们可以在这里得到列表<Cat>
+                    /// 该项不能强制转换为List<Object>
+                    /// 它可以在低级类型“RLMSwiftCollectionBase”上强制转换
                     guard let list = item as? RLMSwiftCollectionBase else { break }
                     if (list._rlmCollection.count > 0) {
                         var referenceArray = [CKRecord.Reference]()
@@ -146,7 +156,7 @@ extension CKRecordConvertible where Self: Object {
                     }
                 default:
                     break
-                    /// Other inner types of List is not supported yet
+                    /// 还不支持列表的其他内部类型
                 }
                 continue
             }
@@ -159,7 +169,7 @@ extension CKRecordConvertible where Self: Object {
                 if objectName == CreamLocation.className(), let creamLocation = item as? CreamLocation {
                     r[prop.name] = creamLocation.location
                 } else if objectName == CreamAsset.className(), let creamAsset = item as? CreamAsset {
-                    // If object is CreamAsset, set record with its wrapped CKAsset value
+                    // 如果对象是CreamAsset，则用其包装的CKAsset值设置记录
                     r[prop.name] = creamAsset.asset
                     if !creamAsset.shouldOverwrite {
                         r[ASSET_SHOULD_OVERWRITE] = false
@@ -168,12 +178,12 @@ extension CKRecordConvertible where Self: Object {
                         r[ASSET_EXTENSION] = fileExtension
                     }
                 } else if let owner = item as? CKRecordConvertible {
-                    // Handle to-one relationship: https://realm.io/docs/swift/latest/#many-to-one
-                    // So the owner Object has to conform to CKRecordConvertible protocol
+                    // 处理一对一关系: https://realm.io/docs/swift/latest/#many-to-one
+                    // 因此所有者对象必须符合CKRecordConvertible协议
                     r[prop.name] = CKRecord.Reference(recordID: owner.recordID, action: .none)
                 } else {
-                    /// Just a warm hint:
-                    /// When we set nil to the property of a CKRecord, that record's property will be hidden in the CloudKit Dashboard
+                    /// 只是温馨提示:
+                    /// 当我们将nil设置为CKRecord的属性时，该记录的属性将隐藏在CloudKit仪表板中
                     r[prop.name] = nil
                 }
             default:

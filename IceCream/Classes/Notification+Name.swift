@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// I believe this should be the best practice for creating custom notifications.
+/// 我相信这应该是创建定制通知的最佳实践。
 /// https://stackoverflow.com/questions/37899778/how-do-you-create-custom-notifications-in-swift-3
 
 public protocol NotificationName {
