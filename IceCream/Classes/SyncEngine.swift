@@ -28,7 +28,7 @@ public final class SyncEngine {
     }
     
     /// 同步状态
-    private var isSyncAvailable: Bool = false {
+    private var isSyncAvailable: Bool = true {
         didSet {
             syncAvailableCallback?(isSyncAvailable)
         }
