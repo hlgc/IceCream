@@ -29,10 +29,10 @@ public protocol Syncable: AnyObject {
     
     func resolvePendingRelationships()
     
-    /// CloudKit相关
-    func pushLocalObjectsToCloudKit()
+    /// CloudKit相关-推送本地数据到iCloud
+    func pushLocalObjectsToCloudKit(_ callback: ((Error?) -> Void)?)
     
     /// Callback
-    var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID]) -> ())? { get set }
+    var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID], _ completion: ((Error?) -> ())? ) -> ())? { get set }
     
 }

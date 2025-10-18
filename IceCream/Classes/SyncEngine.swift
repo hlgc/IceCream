@@ -15,7 +15,25 @@ import CloudKit
 
 public final class SyncEngine {
     /// 同步时间
-    @objc var syncDate: Date = Date()
+    public var syncDateCallback: ((Date) -> Void)?
+    public var syncDate: Date? {
+        set {
+            UserDefaults.standard.set(newValue, forKey: #file+#function)
+            UserDefaults.standard.synchronize()
+        }
+        
+        get {
+            UserDefaults.standard.object(forKey: #file+#function) as? Date
+        }
+    }
+    
+    /// 同步状态
+    private var isSyncAvailable: Bool = false {
+        didSet {
+            syncAvailableCallback?(isSyncAvailable)
+        }
+    }
+    public var syncAvailableCallback: ((Bool) -> Void)?
     
     private let databaseManager: DatabaseManager
     
@@ -38,9 +56,12 @@ public final class SyncEngine {
     }
     
     private func setup() {
-        databaseManager.updateSyncTime = { [weak self] date in
-            guard let self = self else { return }
+        databaseManager.syncDateCallback = { [weak self] date in
+            guard let self = self else {
+                return
+            }
             syncDate = date
+            syncDateCallback?(date)
         }
         databaseManager.prepare()
         databaseManager.container.accountStatus { [weak self] (status, error) in
@@ -48,8 +69,9 @@ public final class SyncEngine {
             switch status {
             case .available:
                 // 可用
+                isSyncAvailable = true
                 self.databaseManager.registerLocalDatabase()
-                self.databaseManager.createCustomZonesIfAllowed()
+                self.databaseManager.createCustomZonesIfAllowed(nil)
                 self.databaseManager.fetchChangesInDatabase(nil)
                 self.databaseManager.resumeLongLivedOperationIfPossible()
                 self.databaseManager.startObservingRemoteChanges()
@@ -57,7 +79,10 @@ public final class SyncEngine {
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
             case .noAccount, .restricted:
                 // 收限制的或者没有帐号
-                guard self.databaseManager is PublicDatabaseManager else { break }
+                guard self.databaseManager is PublicDatabaseManager else {
+                    isSyncAvailable = false
+                    break
+                }
                 self.databaseManager.fetchChangesInDatabase(nil)
                 self.databaseManager.resumeLongLivedOperationIfPossible()
                 self.databaseManager.startObservingRemoteChanges()
@@ -65,11 +90,14 @@ public final class SyncEngine {
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
             case .temporarilyUnavailable:
                 // 暂时不可用
+                isSyncAvailable = false
                 break
             case .couldNotDetermine:
                 // 不能判断
+                isSyncAvailable = false
                 break
             @unknown default:
+                isSyncAvailable = false
                 break
             }
         }
@@ -89,10 +117,58 @@ extension SyncEngine {
     
     /// 将所有现有的本地数据推送到CloudKit
     /// 您不应该过于频繁地调用此方法
-    public func pushAll() {
-        databaseManager.syncObjects.forEach { $0.pushLocalObjectsToCloudKit() }
+    public func pushAll(progress: @escaping (Double, String) -> Void,
+                        completion: @escaping (Result<Void, Error>) -> Void) {
+        let total = Double(databaseManager.syncObjects.count)
+        if total == 0 {
+            progress(1.0, "无数据需要推送")
+            completion(.success(()))
+            return
+        }
+
+        progress(0, "准备中")
+        func pushLocalObjectToCloudKit(_ index: Int) {
+            if index >= databaseManager.syncObjects.count {
+                progress(1.0, "推送完成")
+                completion(.success(()))
+                return
+            }
+            let syncObject = databaseManager.syncObjects[index]
+            
+            syncObject.pushLocalObjectsToCloudKit { error in
+                if let error = error {
+                    completion(.failure(error))
+                    return
+                }
+                
+                let index = Double(index) + 1.0
+                if index > total {
+                    progress(1.0, "推送完成")
+                    completion(.success(()))
+                    return
+                }
+                let p = index/total
+                progress(p, "推送中")
+                pushLocalObjectToCloudKit(Int(index))
+            }
+        }
+        
+        pushLocalObjectToCloudKit(0)
     }
     
+    // 删除云端数据
+    public func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
+        databaseManager.deleteAllCloudKitData { result in
+            switch result {
+            case .success():
+                completion(.success(()))
+                break
+            case .failure(let error):
+                completion(.failure(error))
+                break
+            }
+        }
+    }
 }
 
 public enum Notifications: String, NotificationName {

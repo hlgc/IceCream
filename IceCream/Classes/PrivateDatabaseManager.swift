@@ -20,7 +20,10 @@ final class PrivateDatabaseManager: DatabaseManager {
     
     let syncObjects: [Syncable]
     
-    var updateSyncTime: ((Date) -> Void)?
+    var syncDateCallback: ((Date) -> Void)?
+    
+    // 是否正在清理云端数据
+    private var isDeleteiCloudData: Bool = false
     
     public init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
@@ -28,6 +31,7 @@ final class PrivateDatabaseManager: DatabaseManager {
         self.database = container.privateCloudDatabase
     }
     
+    /// 云端数据变化
     func fetchChangesInDatabase(_ callback: ((Error?) -> Void)?) {
         let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseChangeToken)
         
@@ -67,37 +71,11 @@ final class PrivateDatabaseManager: DatabaseManager {
                 break
             }
         }
-//        changesOperation.fetchDatabaseChangesCompletionBlock = {
-//            [weak self]
-//            newToken, _, error in
-//            guard let self = self else { return }
-//            switch ErrorHandler.shared.resultType(with: error) {
-//            case .success:
-//                self.databaseChangeToken = newToken
-//                // 获取区域级别的更改
-//                self.fetchChangesInZones(callback)
-//            case .retry(let timeToWait, _):
-//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-//                    self.fetchChangesInDatabase(callback)
-//                })
-//            case .recoverableError(let reason, _):
-//                switch reason {
-//                case .changeTokenExpired:
-//                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
-//                    self.databaseChangeToken = nil
-//                    self.fetchChangesInDatabase(callback)
-//                default:
-//                    return
-//                }
-//            default:
-//                return
-//            }
-//        }
         
         database.add(changesOperation)
     }
     
-    func createCustomZonesIfAllowed() {
+    func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?) {
         let zonesToCreate = syncObjects.filter { !$0.isCustomZoneCreated }.map { CKRecordZone(zoneID: $0.zoneID) }
         guard zonesToCreate.count > 0 else { return }
         
@@ -109,12 +87,19 @@ final class PrivateDatabaseManager: DatabaseManager {
                 self.syncObjects.forEach { object in
                     object.isCustomZoneCreated = true
                     
+                    if self.isDeleteiCloudData {
+                        return
+                    }
                     // 当我们在第一步注册本地数据库时，我们必须强制推送本地对象
                     // 还没有被捕获到CloudKit中使数据同步
                     DispatchQueue.main.async {
-                        object.pushLocalObjectsToCloudKit()
+                        object.pushLocalObjectsToCloudKit(callback)
                     }
                 }
+                if !self.isDeleteiCloudData {
+                    return
+                }
+                callback?(nil)
                 break
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
@@ -122,7 +107,7 @@ final class PrivateDatabaseManager: DatabaseManager {
                     break
                 case .retry(let timeToWait, _):
                     ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-                        self.createCustomZonesIfAllowed()
+                        self.createCustomZonesIfAllowed(callback)
                     })
                 default:
                     return
@@ -130,27 +115,6 @@ final class PrivateDatabaseManager: DatabaseManager {
                 break
             }
         }
-//        modifyOp.modifyRecordZonesCompletionBlock = { [weak self](_, _, error) in
-//            guard let self = self else { return }
-//            switch ErrorHandler.shared.resultType(with: error) {
-//            case .success:
-//                self.syncObjects.forEach { object in
-//                    object.isCustomZoneCreated = true
-//
-//                    // 当我们在第一步注册本地数据库时，我们必须强制推送本地对象
-//                    // 还没有被捕获到CloudKit中使数据同步
-//                    DispatchQueue.main.async {
-//                        object.pushLocalObjectsToCloudKit()
-//                    }
-//                }
-//            case .retry(let timeToWait, _):
-//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-//                    self.createCustomZonesIfAllowed()
-//                })
-//            default:
-//                return
-//            }
-//        }
         
         database.add(modifyOp)
     }
@@ -174,10 +138,6 @@ final class PrivateDatabaseManager: DatabaseManager {
                 break
             }
         }
-//        createOp.modifySubscriptionsCompletionBlock = { _, _, error in
-//            guard error == nil else { return }
-//            self.subscriptionIsLocallyCached = true
-//        }
         createOp.qualityOfService = .utility
         database.add(createOp)
         #endif
@@ -204,7 +164,7 @@ final class PrivateDatabaseManager: DatabaseManager {
     }
     
     private func fetchChangesInZones(_ callback: ((Error?) -> Void)? = nil) {
-        let changesOp = CKFetchRecordZoneChangesOperation()//CKFetchRecordZoneChangesOperation(recordZoneIDs: zoneIds, optionsByRecordZoneID: zoneIdOptions)
+        let changesOp = CKFetchRecordZoneChangesOperation()
         changesOp.recordZoneIDs = zoneIds
         changesOp.configurationsByRecordZoneID = zoneIdOptions
         changesOp.fetchAllChanges = true
@@ -224,7 +184,7 @@ final class PrivateDatabaseManager: DatabaseManager {
                 guard let syncObject = self.syncObjects.first(where: { $0.recordType == record.recordType }) else { return }
                 syncObject.add(record: record)
                 /// 更新同步时间
-                updateSyncTime?(Date())
+                syncDateCallback?(Date())
             default:
                 break
             }
@@ -235,7 +195,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             guard let syncObject = self.syncObjects.first(where: { $0.zoneID == recordId.zoneID }) else { return }
             syncObject.delete(recordID: recordId)
             /// 更新同步时间
-            updateSyncTime?(Date())
+            syncDateCallback?(Date())
         }
         
         changesOp.recordZoneFetchResultBlock = { [weak self] zoneId, result in
@@ -268,40 +228,19 @@ final class PrivateDatabaseManager: DatabaseManager {
                 }
             }
         }
-//        changesOp.recordZoneFetchCompletionBlock = { [weak self](zoneId ,token, _, _, error) in
-//            guard let self = self else { return }
-//            switch ErrorHandler.shared.resultType(with: error) {
-//            case .success:
-//                guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
-//                syncObject.zoneChangesToken = token
-//            case .retry(let timeToWait, _):
-//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-//                    self.fetchChangesInZones(callback)
-//                })
-//            case .recoverableError(let reason, _):
-//                switch reason {
-//                case .changeTokenExpired:
-//                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
-//                    guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
-//                    syncObject.zoneChangesToken = nil
-//                    self.fetchChangesInZones(callback)
-//                default:
-//                    return
-//                }
-//            default:
-//                return
-//            }
-//        }
         
         changesOp.fetchRecordZoneChangesResultBlock = { [weak self] result in
             guard let self = self else { return }
-            self.syncObjects.forEach {
-                $0.resolvePendingRelationships()
-            }
+            
             switch result {
+            case .success():
+                syncObjects.forEach {
+                    $0.resolvePendingRelationships()
+                }
+                callback?(nil)
+                break
             case .failure(let error):
                 callback?(error)
-            default:
                 break
             }
         }
@@ -370,5 +309,33 @@ extension PrivateDatabaseManager {
         for syncObject in syncObjects {
             syncObject.cleanUp()
         }
+    }
+    
+    func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard zoneIds.count > 0 else {
+            completion(.success(()))
+            return
+        }
+        isDeleteiCloudData = true
+        let deletesOp = CKModifyRecordZonesOperation(recordZonesToSave: nil, recordZoneIDsToDelete: zoneIds)
+        deletesOp.modifyRecordZonesResultBlock = { result in
+            switch result {
+            case .success:
+                self.syncObjects.forEach {
+                    $0.isCustomZoneCreated = false
+                }
+                self.createCustomZonesIfAllowed { error in
+                    if let error = error {
+                        completion(.failure(error))
+                        return
+                    }
+                    self.isDeleteiCloudData = false
+                    completion(.success(()))
+                }
+            case .failure(let e):
+                completion(.failure(e))
+            }
+        }
+        database.add(deletesOp)
     }
 }

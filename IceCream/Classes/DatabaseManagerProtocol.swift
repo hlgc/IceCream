@@ -16,7 +16,7 @@ protocol DatabaseManager: AnyObject {
     var container: CKContainer { get }
     
     /// 更新同步时间
-    var updateSyncTime: ((Date) -> Void)? { get set }
+    var syncDateCallback: ((Date) -> Void)? { get set }
     
     var syncObjects: [Syncable] { get }
     
@@ -35,22 +35,23 @@ protocol DatabaseManager: AnyObject {
     /// 操作恢复！所有工作都像魔术一样！
     func resumeLongLivedOperationIfPossible()
     
-    func createCustomZonesIfAllowed()
+    func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?)
     func startObservingRemoteChanges()
     func startObservingTermination()
     func createDatabaseSubscriptionIfHaveNot()
     func registerLocalDatabase()
     
     func cleanUp()
+    func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void)
 }
 
 extension DatabaseManager {
     
     func prepare() {
         syncObjects.forEach {
-            $0.pipeToEngine = { [weak self] recordsToStore, recordIDsToDelete in
+            $0.pipeToEngine = { [weak self] recordsToStore, recordIDsToDelete, completion in
                 guard let self = self else { return }
-                self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete)
+                self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, completion: completion)
             }
         }
     }
@@ -65,7 +66,7 @@ extension DatabaseManager {
                         modifyOp.modifyRecordsResultBlock = { _ in
                             print("Resume modify records success!")
                             /// 更新同步时间
-                            self.updateSyncTime?(Date())
+                            self.syncDateCallback?(Date())
                         }
 //                        modifyOp.modifyRecordsCompletionBlock = { (_,_,_) in
 //                            print("Resume modify records success!")
@@ -85,6 +86,7 @@ extension DatabaseManager {
         NotificationCenter.default.addObserver(forName: Notifications.cloudKitDataDidChangeRemotely.name, object: nil, queue: nil, using: { [weak self](_) in
             guard let self = self else { return }
             DispatchQueue.global(qos: .utility).async {
+                // 收到云端变化
                 self.fetchChangesInDatabase(nil)
             }
         })
@@ -121,8 +123,8 @@ extension DatabaseManager {
             switch result {
             case .success(_):
                 /// 更新同步时间
-                updateSyncTime?(Date())
                 DispatchQueue.main.async {
+                    self.syncDateCallback?(Date())
                     completion?(nil)
                 }
                 break
@@ -162,6 +164,7 @@ extension DatabaseManager {
                         }
                     }
                 default:
+                    completion?(error)
                     return
                 }
             }

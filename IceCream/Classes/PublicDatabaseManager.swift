@@ -20,7 +20,7 @@ final class PublicDatabaseManager: DatabaseManager {
     
     let syncObjects: [Syncable]
     
-    var updateSyncTime: ((Date) -> Void)?
+    var syncDateCallback: ((Date) -> Void)?
     
     init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
@@ -37,7 +37,7 @@ final class PublicDatabaseManager: DatabaseManager {
         }
     }
     
-    func createCustomZonesIfAllowed() {
+    func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?) {
         
     }
     
@@ -118,5 +118,9 @@ final class PublicDatabaseManager: DatabaseManager {
         for syncObject in syncObjects {
             syncObject.cleanUp()
         }
+    }
+    
+    func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
+        
     }
 }
