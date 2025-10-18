@@ -56,89 +56,116 @@ import RealmSwift
 //    }
 //}
 
-//final class BackgroundWorker {
-//    static let shared = BackgroundWorker()
-//
-//    // 串行队列，保证任务按顺序执行
-//    private let queue: OperationQueue = {
-//        let q = OperationQueue()
-//        q.name = "com.icecream.BackgroundWorker"
-//        q.maxConcurrentOperationCount = 1
-//        return q
-//    }()
-//
-//    // 幂等：每次 start 只入队，不覆盖其他调用
-//    func start(_ block: @escaping () -> Void) {
-//        queue.addOperation(block)
-//    }
-//
-//    // 停止：取消并清空队列
-//    func stop() {
-//        queue.cancelAllOperations()
-//    }
-//}
+import UIKit // 仅 iOS
 
-// 串行任务 + 去抖合并：避免并发覆盖与频繁触发
-final class BackgroundWorker {
+final class BackgroundWorker: NSObject {
     static let shared = BackgroundWorker()
 
-    // 串行执行队列（OperationQueue 保证严格顺序）
-    private let opQueue: OperationQueue = {
-        let q = OperationQueue()
-        q.name = "com.icecream.BackgroundWorker.queue"
-        q.maxConcurrentOperationCount = 1
-        q.qualityOfService = .utility
-        return q
-    }()
+    private var thread: Thread?
+    private let lock = NSLock()
+    private var tasks: [() -> Void] = []
 
-    // 去抖器：短时间多次 start 合并为一次
-    private let debouncer = Debouncer(interval: 0.3, queue: DispatchQueue(label: "com.icecream.BackgroundWorker.debounce"))
+    // 后台任务 ID
+    private var bgTaskID: UIBackgroundTaskIdentifier = .invalid
 
-    // 可选：外部查询是否有任务在跑
-    var isRunning: Bool { !opQueue.operations.isEmpty }
-
-    // 入队任务（幂等）：短时间内多次调用只触发一次
     func start(_ block: @escaping () -> Void) {
-        debouncer.call { [weak self] in
-            guard let self = self else { return }
-            self.opQueue.addOperation {
-                autoreleasepool { block() } // 每个任务独立内存域，适配 Realm
-            }
+        enqueue(block)
+        ensureThread()
+        // 申请后台时间，避免挂起导致不执行
+        beginBGTaskIfNeeded()
+        if let thread = thread {
+            perform(#selector(processNext),
+                    on: thread,
+                    with: nil,
+                    waitUntilDone: false,
+                    modes: [RunLoop.Mode.default.rawValue])
         }
     }
 
-    // 停止：取消并清空队列，清理去抖中的任务
     func stop() {
-        debouncer.cancel()
-        opQueue.cancelAllOperations()
+        lock.lock()
+        tasks.removeAll()
+        lock.unlock()
+        thread?.cancel()
+        thread = nil
+        endBGTaskIfNeeded()
+    }
+
+    private func enqueue(_ block: @escaping () -> Void) {
+        lock.lock()
+        tasks.append(block)
+        lock.unlock()
+    }
+
+    private func ensureThread() {
+        guard thread == nil else { return }
+        let t = Thread { [weak self] in
+            guard let self = self else { return }
+            let rl = RunLoop.current
+            rl.add(Port(), forMode: .default)
+            while let th = self.thread, !th.isCancelled {
+                rl.run(mode: .default, before: Date.distantFuture)
+            }
+            Thread.exit()
+        }
+        t.name = "com.icecream.BackgroundWorker.\(UUID().uuidString)"
+        thread = t
+        t.start()
+    }
+
+    @objc private func processNext() {
+        var task: (() -> Void)?
+        lock.lock()
+        if !tasks.isEmpty { task = tasks.removeFirst() }
+        lock.unlock()
+
+        if let task = task {
+            autoreleasepool {
+                task()
+            }
+            // 若还有任务，继续调度
+            lock.lock()
+            let hasMore = !tasks.isEmpty
+            lock.unlock()
+            if hasMore, let thread = thread {
+                perform(#selector(processNext),
+                        on: thread,
+                        with: nil,
+                        waitUntilDone: false,
+                        modes: [RunLoop.Mode.default.rawValue])
+            } else {
+                // 所有任务完成后结束后台任务
+                endBGTaskIfNeeded()
+            }
+        } else {
+            endBGTaskIfNeeded()
+        }
+    }
+
+    // MARK: - Background task
+
+    private func beginBGTaskIfNeeded() {
+        guard bgTaskID == .invalid else { return }
+        bgTaskID = UIApplication.shared.beginBackgroundTask(withName: "IceCreamBackgroundWorker") { [weak self] in
+            // 到期处理：结束任务，持久化未执行队列以便下次启动补偿
+            self?.endBGTaskIfNeeded()
+            // TODO: 将 tasks 保存到本地，App 下次启动时恢复执行
+        }
+    }
+
+    private func endBGTaskIfNeeded() {
+        if bgTaskID != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTaskID)
+            bgTaskID = .invalid
+        }
     }
 }
 
-// 简单去抖器实现
-private final class Debouncer {
-    private let interval: TimeInterval
-    private let queue: DispatchQueue
-    private var workItem: DispatchWorkItem?
-    private let lock = NSLock()
+// 说明（放到你的 CKOperation 创建处）：
+// 对 CloudKit 上传操作设置长时操作，系统可在 App 退出后继续执行，并在下次启动恢复。
+// 示例：
+// let op = CKModifyRecordsOperation(recordsToSave: records, recordIDsToDelete: nil)
+// op.configuration.isLongLived = true
+// CKContainer.default().add(op)
+// 下次启动：CKContainer.default().fetchAllLongLivedOperationIDs { ids, _ in /* 恢复 */ }
 
-    init(interval: TimeInterval, queue: DispatchQueue) {
-        self.interval = interval
-        self.queue = queue
-    }
-
-    func call(_ block: @escaping () -> Void) {
-        lock.lock()
-        workItem?.cancel()
-        let item = DispatchWorkItem(block: block)
-        workItem = item
-        lock.unlock()
-        queue.asyncAfter(deadline: .now() + interval, execute: item)
-    }
-
-    func cancel() {
-        lock.lock()
-        workItem?.cancel()
-        workItem = nil
-        lock.unlock()
-    }
-}

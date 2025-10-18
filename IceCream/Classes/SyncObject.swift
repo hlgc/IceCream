@@ -58,15 +58,27 @@ extension SyncObject: Syncable {
             /// 第一次启动时，令牌为零，服务器将把云上的所有内容都交给客户端
             /// 在其他情况下，只需将数据对象解归档
             guard let tokenData = UserDefaults.standard.object(forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value) as? Data else { return nil }
-            return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
+            do {
+                let token = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: tokenData)
+                // 使用 token
+                return token
+            } catch {
+                // 处理解档错误
+                print("Failed to unarchive CKServerChangeToken:", error)
+                return nil
+            }
         }
         set {
             guard let n = newValue else {
                 UserDefaults.standard.removeObject(forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value)
                 return
             }
-            let data = NSKeyedArchiver.archivedData(withRootObject: n)
-            UserDefaults.standard.set(data, forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value)
+            do {
+                let data = try NSKeyedArchiver.archivedData(withRootObject: n, requiringSecureCoding: true)
+                UserDefaults.standard.set(data, forKey: T.className() + IceCreamKey.zoneChangesTokenKey.value)
+            } catch {
+                print("Failed to archive CKServerChangeToken:", error)
+            }
         }
     }
 
@@ -80,6 +92,7 @@ extension SyncObject: Syncable {
         }
     }
     
+    /// 云端同步添加
     public func add(record: CKRecord) {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)

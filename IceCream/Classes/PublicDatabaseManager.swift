@@ -20,6 +20,8 @@ final class PublicDatabaseManager: DatabaseManager {
     
     let syncObjects: [Syncable]
     
+    var updateSyncTime: ((Date) -> Void)?
+    
     init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
         self.container = container

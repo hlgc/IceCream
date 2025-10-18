@@ -34,7 +34,7 @@ struct ErrorHandler {
     enum CKOperationFailReason {
         /// 更改令牌已过期
         case changeTokenExpired
-        /// 网络
+        /// 网络错误
         case network
         /// 超过配额
         case quotaExceeded

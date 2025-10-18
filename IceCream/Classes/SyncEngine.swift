@@ -14,6 +14,8 @@ import CloudKit
 /// 3.它把CKRecordZone的东西交给SyncObject，这样它就可以对本地领域数据库产生影响
 
 public final class SyncEngine {
+    /// 同步时间
+    @objc var syncDate: Date = Date()
     
     private let databaseManager: DatabaseManager
     
@@ -36,11 +38,16 @@ public final class SyncEngine {
     }
     
     private func setup() {
+        databaseManager.updateSyncTime = { [weak self] date in
+            guard let self = self else { return }
+            syncDate = date
+        }
         databaseManager.prepare()
         databaseManager.container.accountStatus { [weak self] (status, error) in
             guard let self = self else { return }
             switch status {
             case .available:
+                // 可用
                 self.databaseManager.registerLocalDatabase()
                 self.databaseManager.createCustomZonesIfAllowed()
                 self.databaseManager.fetchChangesInDatabase(nil)
@@ -49,6 +56,7 @@ public final class SyncEngine {
                 self.databaseManager.startObservingTermination()
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
             case .noAccount, .restricted:
+                // 收限制的或者没有帐号
                 guard self.databaseManager is PublicDatabaseManager else { break }
                 self.databaseManager.fetchChangesInDatabase(nil)
                 self.databaseManager.resumeLongLivedOperationIfPossible()
@@ -56,8 +64,10 @@ public final class SyncEngine {
                 self.databaseManager.startObservingTermination()
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
             case .temporarilyUnavailable:
+                // 暂时不可用
                 break
             case .couldNotDetermine:
+                // 不能判断
                 break
             @unknown default:
                 break
@@ -72,7 +82,7 @@ extension SyncEngine {
     
     /// 获取CloudKit上的数据并与local合并
     ///
-    /// -参数completionHandler:在“privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
+    /// - 参数completionHandler:在“privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
     public func pull(completionHandler: ((Error?) -> Void)? = nil) {
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
@@ -103,7 +113,7 @@ public enum IceCreamKey: String {
     }
 }
 
-///危险部分:
+/// 危险部分:
 /// 在大多数情况下，您不应该更改字符串值，因为它与用户设置有关。
 /// 例如:cloudKitSubscriptionID，如果不想使用“private_changes”而使用另一个字符串。你应该先删除旧的订阅。
 /// 否则您的用户将不会再次保存同一个订阅。所以你有麻烦了。

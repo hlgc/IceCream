@@ -188,20 +188,20 @@
 		6743F71D202B0F9400912163 /* Classes */ = {
 			isa = PBXGroup;
 			children = (
-				0D695059260CF0DA0039A9A8 /* PendingRelationshipsWorker.swift */,
-				474FF0E22284B6F700921CF6 /* BackgroundWorker.swift */,
 				6743F71E202B0F9400912163 /* .gitkeep */,
-				6773DF0220BD2CE10019FF3A /* Syncable.swift */,
-				673B1E6B2273EECE00EB4FEE /* DatabaseManagerProtocol.swift */,
-				673B1E6C2273EECF00EB4FEE /* PrivateDatabaseManager.swift */,
-				673B1E6D2273EECF00EB4FEE /* PublicDatabaseManager.swift */,
+				474FF0E22284B6F700921CF6 /* BackgroundWorker.swift */,
 				6773DEFF20BD2CBD0019FF3A /* CKRecordConvertible.swift */,
 				6773DEFE20BD2CBD0019FF3A /* CKRecordRecoverable.swift */,
-				6743F720202B0F9400912163 /* ErrorHandler.swift */,
-				6743F722202B0F9400912163 /* Manifest.swift */,
 				6743F723202B0F9400912163 /* CreamAsset.swift */,
 				0D661B76279D48F50028CBEE /* CreamLocation.swift */,
+				673B1E6B2273EECE00EB4FEE /* DatabaseManagerProtocol.swift */,
+				6743F720202B0F9400912163 /* ErrorHandler.swift */,
+				6743F722202B0F9400912163 /* Manifest.swift */,
 				6743F725202B0F9400912163 /* Notification+Name.swift */,
+				0D695059260CF0DA0039A9A8 /* PendingRelationshipsWorker.swift */,
+				673B1E6C2273EECF00EB4FEE /* PrivateDatabaseManager.swift */,
+				673B1E6D2273EECF00EB4FEE /* PublicDatabaseManager.swift */,
+				6773DF0220BD2CE10019FF3A /* Syncable.swift */,
 				41767BFC209863BA00178513 /* SyncEngine.swift */,
 				6767988E20BCEEB0008F98AD /* SyncObject.swift */,
 			);

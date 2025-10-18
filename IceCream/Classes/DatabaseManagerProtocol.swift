@@ -15,6 +15,9 @@ protocol DatabaseManager: AnyObject {
     /// 与应用程序相关的内容封装。
     var container: CKContainer { get }
     
+    /// 更新同步时间
+    var updateSyncTime: ((Date) -> Void)? { get set }
+    
     var syncObjects: [Syncable] { get }
     
     init(objects: [Syncable], container: CKContainer)
@@ -59,18 +62,19 @@ extension DatabaseManager {
                 self.container.fetchLongLivedOperation(withID: id, completionHandler: { [weak self](ope, error) in
                     guard let self = self, error == nil else { return }
                     if let modifyOp = ope as? CKModifyRecordsOperation {
-                        modifyOp.modifyRecordsCompletionBlock = { (_,_,_) in
+                        modifyOp.modifyRecordsResultBlock = { _ in
                             print("Resume modify records success!")
+                            /// 更新同步时间
+                            self.updateSyncTime?(Date())
                         }
+//                        modifyOp.modifyRecordsCompletionBlock = { (_,_,_) in
+//                            print("Resume modify records success!")
+//                        }
                         // doc中的苹果示例代码(https://developer.apple.com/documentation/cloudkit/ckoperation/#1666033)
                         // 告诉我们在容器中添加操作。但无论如何，它在iOS 15测试版上崩溃了。
                         // 而崩溃日志告诉我们“CKDatabaseOperations必须提交给CKDatabase”。
                         // 所以我猜守护进程里肯定有什么东西变了。我们临时添加了这个可用性检查。
-                        if #available(iOS 15, *) {
-                            self.database.add(modifyOp)
-                        } else {
-                            self.container.add(modifyOp)
-                        }
+                        database.add(modifyOp)
                     }
                 })
             }
@@ -109,54 +113,63 @@ extension DatabaseManager {
         // 如果要处理部分失败，请设置。isAtomic为false并实现CKOperationResultType。失败(原因:。部分故障)
         modifyOpe.isAtomic = true
         
-        modifyOpe.modifyRecordsCompletionBlock = {
+        modifyOpe.modifyRecordsResultBlock = {
             [weak self]
-            (_, _, error) in
+            (result) in
             
             guard let self = self else { return }
-            
-            switch ErrorHandler.shared.resultType(with: error) {
-            case .success:
+            switch result {
+            case .success(_):
+                /// 更新同步时间
+                updateSyncTime?(Date())
                 DispatchQueue.main.async {
                     completion?(nil)
                 }
-            case .retry(let timeToWait, _):
-                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
-                    self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, completion: completion)
-                }
-            case .chunk:
-                /// CloudKit规定单个请求中的最大项目数为400。
-                /// 所以我觉得300应该是他们没问题的。
-//                let chunkedRecords = recordsToStore.chunkItUp(by: 300)
-//                for chunk in chunkedRecords {
-//                    self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: recordIDsToDelete, completion: completion)
-//                }
-                let chunkedToStoreRecords = recordsToStore.chunkItUp(by: ErrorHandler.Constant.chunkSize)
-                let chunkedToDeleteRecordIDs = recordIDsToDelete.chunkItUp(by: ErrorHandler.Constant.chunkSize)
-                
-                if chunkedToStoreRecords.count >= chunkedToDeleteRecordIDs.count {
-                    for (index, chunk) in chunkedToStoreRecords.enumerated() {
-                        if index < chunkedToDeleteRecordIDs.count {
-                            self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: chunkedToDeleteRecordIDs[index], completion: completion)
-                        } else {
-                            self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: [], completion: completion)
+                break
+            case .failure(let error):
+                switch ErrorHandler.shared.resultType(with: error) {
+                case .success:
+                    break
+                case .retry(let timeToWait, _):
+                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
+                        self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, completion: completion)
+                    }
+                case .chunk:
+                    /// CloudKit规定单个请求中的最大项目数为400。
+                    /// 所以我觉得300应该是他们没问题的。
+                    //                let chunkedRecords = recordsToStore.chunkItUp(by: 300)
+                    //                for chunk in chunkedRecords {
+                    //                    self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: recordIDsToDelete, completion: completion)
+                    //                }
+                    let chunkedToStoreRecords = recordsToStore.chunkItUp(by: ErrorHandler.Constant.chunkSize)
+                    let chunkedToDeleteRecordIDs = recordIDsToDelete.chunkItUp(by: ErrorHandler.Constant.chunkSize)
+                    
+                    if chunkedToStoreRecords.count >= chunkedToDeleteRecordIDs.count {
+                        for (index, chunk) in chunkedToStoreRecords.enumerated() {
+                            if index < chunkedToDeleteRecordIDs.count {
+                                self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: chunkedToDeleteRecordIDs[index], completion: completion)
+                            } else {
+                                self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: [], completion: completion)
+                            }
+                        }
+                    } else {
+                        for (index, chunk) in chunkedToDeleteRecordIDs.enumerated() {
+                            if index < chunkedToStoreRecords.count {
+                                self.syncRecordsToCloudKit(recordsToStore: chunkedToStoreRecords[index], recordIDsToDelete: chunk, completion: completion)
+                            } else {
+                                self.syncRecordsToCloudKit(recordsToStore: [], recordIDsToDelete: chunk, completion: completion)
+                            }
                         }
                     }
-                } else {
-                    for (index, chunk) in chunkedToDeleteRecordIDs.enumerated() {
-                        if index < chunkedToStoreRecords.count {
-                            self.syncRecordsToCloudKit(recordsToStore: chunkedToStoreRecords[index], recordIDsToDelete: chunk, completion: completion)
-                        } else {
-                            self.syncRecordsToCloudKit(recordsToStore: [], recordIDsToDelete: chunk, completion: completion)
-                        }
-                    }
+                default:
+                    return
                 }
-            default:
-                return
             }
         }
-        
         database.add(modifyOpe)
     }
     
+    private func modifyRecordsResult() {
+        
+    }
 }

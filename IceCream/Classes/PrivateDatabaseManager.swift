@@ -20,6 +20,8 @@ final class PrivateDatabaseManager: DatabaseManager {
     
     let syncObjects: [Syncable]
     
+    var updateSyncTime: ((Date) -> Void)?
+    
     public init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
         self.container = container
@@ -34,32 +36,63 @@ final class PrivateDatabaseManager: DatabaseManager {
             self?.databaseChangeToken = newToken
         }
         
-        changesOperation.fetchDatabaseChangesCompletionBlock = {
-            [weak self]
-            newToken, _, error in
+        changesOperation.fetchDatabaseChangesResultBlock = { [weak self] operationResult in
             guard let self = self else { return }
-            switch ErrorHandler.shared.resultType(with: error) {
-            case .success:
-                self.databaseChangeToken = newToken
+            switch operationResult {
+            case .success((let newToken, _)):
+                databaseChangeToken = newToken
                 // 获取区域级别的更改
-                self.fetchChangesInZones(callback)
-            case .retry(let timeToWait, _):
-                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-                    self.fetchChangesInDatabase(callback)
-                })
-            case .recoverableError(let reason, _):
-                switch reason {
-                case .changeTokenExpired:
-                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
-                    self.databaseChangeToken = nil
-                    self.fetchChangesInDatabase(callback)
+                fetchChangesInZones(callback)
+                break
+            case .failure(let error):
+                switch ErrorHandler.shared.resultType(with: error) {
+                case .success:
+                    break
+                case .retry(let timeToWait, _):
+                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+                        self.fetchChangesInDatabase(callback)
+                    })
+                case .recoverableError(let reason, _):
+                    switch reason {
+                    case .changeTokenExpired:
+                        /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
+                        self.databaseChangeToken = nil
+                        self.fetchChangesInDatabase(callback)
+                    default:
+                        return
+                    }
                 default:
                     return
                 }
-            default:
-                return
+                break
             }
         }
+//        changesOperation.fetchDatabaseChangesCompletionBlock = {
+//            [weak self]
+//            newToken, _, error in
+//            guard let self = self else { return }
+//            switch ErrorHandler.shared.resultType(with: error) {
+//            case .success:
+//                self.databaseChangeToken = newToken
+//                // 获取区域级别的更改
+//                self.fetchChangesInZones(callback)
+//            case .retry(let timeToWait, _):
+//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+//                    self.fetchChangesInDatabase(callback)
+//                })
+//            case .recoverableError(let reason, _):
+//                switch reason {
+//                case .changeTokenExpired:
+//                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
+//                    self.databaseChangeToken = nil
+//                    self.fetchChangesInDatabase(callback)
+//                default:
+//                    return
+//                }
+//            default:
+//                return
+//            }
+//        }
         
         database.add(changesOperation)
     }
@@ -69,10 +102,10 @@ final class PrivateDatabaseManager: DatabaseManager {
         guard zonesToCreate.count > 0 else { return }
         
         let modifyOp = CKModifyRecordZonesOperation(recordZonesToSave: zonesToCreate, recordZoneIDsToDelete: nil)
-        modifyOp.modifyRecordZonesCompletionBlock = { [weak self](_, _, error) in
+        modifyOp.modifyRecordZonesResultBlock = { [weak self] operationResult in
             guard let self = self else { return }
-            switch ErrorHandler.shared.resultType(with: error) {
-            case .success:
+            switch operationResult {
+            case .success():
                 self.syncObjects.forEach { object in
                     object.isCustomZoneCreated = true
                     
@@ -82,14 +115,42 @@ final class PrivateDatabaseManager: DatabaseManager {
                         object.pushLocalObjectsToCloudKit()
                     }
                 }
-            case .retry(let timeToWait, _):
-                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-                    self.createCustomZonesIfAllowed()
-                })
-            default:
-                return
+                break
+            case .failure(let error):
+                switch ErrorHandler.shared.resultType(with: error) {
+                case .success:
+                    break
+                case .retry(let timeToWait, _):
+                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+                        self.createCustomZonesIfAllowed()
+                    })
+                default:
+                    return
+                }
+                break
             }
         }
+//        modifyOp.modifyRecordZonesCompletionBlock = { [weak self](_, _, error) in
+//            guard let self = self else { return }
+//            switch ErrorHandler.shared.resultType(with: error) {
+//            case .success:
+//                self.syncObjects.forEach { object in
+//                    object.isCustomZoneCreated = true
+//
+//                    // 当我们在第一步注册本地数据库时，我们必须强制推送本地对象
+//                    // 还没有被捕获到CloudKit中使数据同步
+//                    DispatchQueue.main.async {
+//                        object.pushLocalObjectsToCloudKit()
+//                    }
+//                }
+//            case .retry(let timeToWait, _):
+//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+//                    self.createCustomZonesIfAllowed()
+//                })
+//            default:
+//                return
+//            }
+//        }
         
         database.add(modifyOp)
     }
@@ -105,10 +166,18 @@ final class PrivateDatabaseManager: DatabaseManager {
         subscription.notificationInfo = notificationInfo
         
         let createOp = CKModifySubscriptionsOperation(subscriptionsToSave: [subscription], subscriptionIDsToDelete: [])
-        createOp.modifySubscriptionsCompletionBlock = { _, _, error in
-            guard error == nil else { return }
-            self.subscriptionIsLocallyCached = true
+        createOp.modifySubscriptionsResultBlock = { operationResult in
+            switch operationResult {
+            case .success():
+                self.subscriptionIsLocallyCached = true
+            case .failure(_):
+                break
+            }
         }
+//        createOp.modifySubscriptionsCompletionBlock = { _, _, error in
+//            guard error == nil else { return }
+//            self.subscriptionIsLocallyCached = true
+//        }
         createOp.qualityOfService = .utility
         database.add(createOp)
         #endif
@@ -117,11 +186,11 @@ final class PrivateDatabaseManager: DatabaseManager {
     func startObservingTermination() {
         #if os(iOS) || os(tvOS)
         
-        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willTerminateNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willResignActiveNotification, object: nil)
         
         #elseif os(macOS)
         
-        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willTerminateNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willResignActiveNotification, object: nil)
         
         #endif
     }
@@ -135,7 +204,9 @@ final class PrivateDatabaseManager: DatabaseManager {
     }
     
     private func fetchChangesInZones(_ callback: ((Error?) -> Void)? = nil) {
-        let changesOp = CKFetchRecordZoneChangesOperation(recordZoneIDs: zoneIds, optionsByRecordZoneID: zoneIdOptions)
+        let changesOp = CKFetchRecordZoneChangesOperation()//CKFetchRecordZoneChangesOperation(recordZoneIDs: zoneIds, optionsByRecordZoneID: zoneIdOptions)
+        changesOp.recordZoneIDs = zoneIds
+        changesOp.configurationsByRecordZoneID = zoneIdOptions
         changesOp.fetchAllChanges = true
         
         changesOp.recordZoneChangeTokensUpdatedBlock = { [weak self] zoneId, token, _ in
@@ -144,51 +215,95 @@ final class PrivateDatabaseManager: DatabaseManager {
             syncObject.zoneChangesToken = token
         }
         
-        changesOp.recordChangedBlock = { [weak self] record in
+        changesOp.recordWasChangedBlock = { [weak self] recordID, recordResult in
             /// 云端会返回上次zoneChangesToken以来修改的记录，这里需要做本地缓存。
             /// 处理记录:
             guard let self = self else { return }
-            guard let syncObject = self.syncObjects.first(where: { $0.recordType == record.recordType }) else { return }
-            syncObject.add(record: record)
+            switch recordResult {
+            case .success(let record):
+                guard let syncObject = self.syncObjects.first(where: { $0.recordType == record.recordType }) else { return }
+                syncObject.add(record: record)
+                /// 更新同步时间
+                updateSyncTime?(Date())
+            default:
+                break
+            }
         }
         
         changesOp.recordWithIDWasDeletedBlock = { [weak self] recordId, _ in
             guard let self = self else { return }
             guard let syncObject = self.syncObjects.first(where: { $0.zoneID == recordId.zoneID }) else { return }
             syncObject.delete(recordID: recordId)
+            /// 更新同步时间
+            updateSyncTime?(Date())
         }
         
-        changesOp.recordZoneFetchCompletionBlock = { [weak self](zoneId ,token, _, _, error) in
+        changesOp.recordZoneFetchResultBlock = { [weak self] zoneId, result in
             guard let self = self else { return }
-            switch ErrorHandler.shared.resultType(with: error) {
-            case .success:
+            switch result {
+            case .success((let token, _, _)):
                 guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
                 syncObject.zoneChangesToken = token
-            case .retry(let timeToWait, _):
-                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-                    self.fetchChangesInZones(callback)
-                })
-            case .recoverableError(let reason, _):
-                switch reason {
-                case .changeTokenExpired:
-                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
-                    guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
-                    syncObject.zoneChangesToken = nil
-                    self.fetchChangesInZones(callback)
+                break
+            case .failure(let error):
+                switch ErrorHandler.shared.resultType(with: error) {
+                case .success:
+                    break
+                case .retry(let timeToWait, _):
+                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+                        self.fetchChangesInZones(callback)
+                    })
+                case .recoverableError(let reason, _):
+                    switch reason {
+                    case .changeTokenExpired:
+                        /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
+                        guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
+                        syncObject.zoneChangesToken = nil
+                        self.fetchChangesInZones(callback)
+                    default:
+                        return
+                    }
                 default:
                     return
                 }
-            default:
-                return
             }
         }
+//        changesOp.recordZoneFetchCompletionBlock = { [weak self](zoneId ,token, _, _, error) in
+//            guard let self = self else { return }
+//            switch ErrorHandler.shared.resultType(with: error) {
+//            case .success:
+//                guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
+//                syncObject.zoneChangesToken = token
+//            case .retry(let timeToWait, _):
+//                ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
+//                    self.fetchChangesInZones(callback)
+//                })
+//            case .recoverableError(let reason, _):
+//                switch reason {
+//                case .changeTokenExpired:
+//                    /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
+//                    guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
+//                    syncObject.zoneChangesToken = nil
+//                    self.fetchChangesInZones(callback)
+//                default:
+//                    return
+//                }
+//            default:
+//                return
+//            }
+//        }
         
-        changesOp.fetchRecordZoneChangesCompletionBlock = { [weak self] error in
+        changesOp.fetchRecordZoneChangesResultBlock = { [weak self] result in
             guard let self = self else { return }
             self.syncObjects.forEach {
                 $0.resolvePendingRelationships()
             }
-            callback?(error)
+            switch result {
+            case .failure(let error):
+                callback?(error)
+            default:
+                break
+            }
         }
         
         database.add(changesOp)
@@ -202,15 +317,28 @@ extension PrivateDatabaseManager {
             /// 第一次启动时，令牌为零，服务器将把云上的所有内容都交给客户端
             /// 在其他情况下，只需将数据对象解归档
             guard let tokenData = UserDefaults.standard.object(forKey: IceCreamKey.databaseChangesTokenKey.value) as? Data else { return nil }
-            return NSKeyedUnarchiver.unarchiveObject(with: tokenData) as? CKServerChangeToken
+            do {
+                let token = try NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: tokenData)
+                // 使用 token
+                return token
+            } catch {
+                // 处理解档错误
+                print("Failed to unarchive CKServerChangeToken:", error)
+                return nil
+            }
         }
         set {
             guard let n = newValue else {
                 UserDefaults.standard.removeObject(forKey: IceCreamKey.databaseChangesTokenKey.value)
                 return
             }
-            let data = NSKeyedArchiver.archivedData(withRootObject: n)
-            UserDefaults.standard.set(data, forKey: IceCreamKey.databaseChangesTokenKey.value)
+            
+            do {
+                let data = try NSKeyedArchiver.archivedData(withRootObject: n, requiringSecureCoding: true)
+                UserDefaults.standard.set(data, forKey: IceCreamKey.databaseChangesTokenKey.value)
+            } catch {
+                print("Failed to archive CKServerChangeToken:", error)
+            }
         }
     }
     
@@ -228,10 +356,10 @@ extension PrivateDatabaseManager {
         return syncObjects.map { $0.zoneID }
     }
     
-    private var zoneIdOptions: [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneOptions] {
-        return syncObjects.reduce([CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneOptions]()) { (dict, syncObject) -> [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneOptions] in
+    private var zoneIdOptions: [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] {
+        return syncObjects.reduce([CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration]()) { (dict, syncObject) -> [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] in
             var dict = dict
-            let zoneChangesOptions = CKFetchRecordZoneChangesOperation.ZoneOptions()
+            let zoneChangesOptions = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
             zoneChangesOptions.previousServerChangeToken = syncObject.zoneChangesToken
             dict[syncObject.zoneID] = zoneChangesOptions
             return dict
