@@ -176,6 +176,10 @@ extension SyncObject: Syncable {
             let realm = try! Realm(configuration: self.realmConfiguration)
             let objects = realm.objects(T.self).filter { $0.isDeleted }
             
+            if objects.count <= 0 {
+                return
+            }
+            
             var tokens: [NotificationToken] = []
             self.notificationToken.flatMap { tokens = [$0] }
             

@@ -147,10 +147,12 @@ final class PrivateDatabaseManager: DatabaseManager {
         #if os(iOS) || os(tvOS)
         
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willTerminateNotification, object: nil)
         
         #elseif os(macOS)
         
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willResignActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willTerminateNotification, object: nil)
         
         #endif
     }
