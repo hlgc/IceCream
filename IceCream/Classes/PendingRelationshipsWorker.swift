@@ -26,6 +26,7 @@ final class PendingRelationshipsWorker<Element: Object> {
         }
         BackgroundWorker.shared.start {
             for (primaryKeyValue, (propName, owner)) in self.pendingListElementPrimaryKeyValue {
+                if owner.isInvalidated { continue } // <--- 新增检查
                 if let list = owner.value(forKey: propName) as? List<Element> {
                     if let existListElementObject = realm.object(ofType: Element.self, forPrimaryKey: primaryKeyValue) {
                         try! realm.write {
