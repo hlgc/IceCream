@@ -56,7 +56,9 @@ import RealmSwift
 //    }
 //}
 
-import UIKit // 仅 iOS
+#if canImport(UIKit)
+import UIKit
+#endif
 
 final class BackgroundWorker: NSObject {
     static let shared = BackgroundWorker()
@@ -65,15 +67,22 @@ final class BackgroundWorker: NSObject {
     private let lock = NSLock()
     private var tasks: [() -> Void] = []
 
+#if os(iOS) || os(tvOS)
     // 后台任务 ID
     private var bgTaskID: UIBackgroundTaskIdentifier = .invalid
+#endif
 
     func start(_ block: @escaping () -> Void) {
-        enqueue(block)
+        lock.lock()
+        let wasEmpty = tasks.isEmpty
+        tasks.append(block)
+        lock.unlock()
+        
         ensureThread()
         // 申请后台时间，避免挂起导致不执行
         beginBGTaskIfNeeded()
-        if let thread = thread {
+        
+        if wasEmpty, let thread = thread {
             perform(#selector(processNext),
                     on: thread,
                     with: nil,
@@ -85,79 +94,77 @@ final class BackgroundWorker: NSObject {
     func stop() {
         lock.lock()
         tasks.removeAll()
-        lock.unlock()
-        thread?.cancel()
+        let t = thread
         thread = nil
+        lock.unlock()
+        
+        t?.cancel()
         endBGTaskIfNeeded()
     }
 
-    private func enqueue(_ block: @escaping () -> Void) {
-        lock.lock()
-        tasks.append(block)
-        lock.unlock()
-    }
-
     private func ensureThread() {
-        guard thread == nil else { return }
+        // 用 lock 整体保护，避免多线程并发进入时创建多个后台线程
+        lock.lock()
+        guard thread == nil else {
+            lock.unlock()
+            return
+        }
         let t = Thread { [weak self] in
             guard let self = self else { return }
             let rl = RunLoop.current
             rl.add(Port(), forMode: .default)
-            while let th = self.thread, !th.isCancelled {
+            while !Thread.current.isCancelled {
                 rl.run(mode: .default, before: Date.distantFuture)
             }
             Thread.exit()
         }
         t.name = "com.icecream.BackgroundWorker.\(UUID().uuidString)"
         thread = t
+        lock.unlock()
         t.start()
     }
 
     @objc private func processNext() {
-        var task: (() -> Void)?
-        lock.lock()
-        if !tasks.isEmpty { task = tasks.removeFirst() }
-        lock.unlock()
-
-        if let task = task {
+        while true {
+            lock.lock()
+            let task = tasks.isEmpty ? nil : tasks.removeFirst()
+            lock.unlock()
+            
+            guard let task = task else { break }
+            
             autoreleasepool {
                 task()
             }
-            // 若还有任务，继续调度
-            lock.lock()
-            let hasMore = !tasks.isEmpty
-            lock.unlock()
-            if hasMore, let thread = thread {
-                perform(#selector(processNext),
-                        on: thread,
-                        with: nil,
-                        waitUntilDone: false,
-                        modes: [RunLoop.Mode.default.rawValue])
-            } else {
-                // 所有任务完成后结束后台任务
-                endBGTaskIfNeeded()
-            }
-        } else {
-            endBGTaskIfNeeded()
         }
+        // 所有任务完成后结束后台任务
+        endBGTaskIfNeeded()
     }
 
     // MARK: - Background task
 
     private func beginBGTaskIfNeeded() {
+#if os(iOS) || os(tvOS)
+        lock.lock()
+        defer { lock.unlock() }
         guard bgTaskID == .invalid else { return }
+        // 注意：如果在 App Extension 中使用，UIApplication.shared 不可用，需视情况处理
         bgTaskID = UIApplication.shared.beginBackgroundTask(withName: "IceCreamBackgroundWorker") { [weak self] in
             // 到期处理：结束任务，持久化未执行队列以便下次启动补偿
             self?.endBGTaskIfNeeded()
             // TODO: 将 tasks 保存到本地，App 下次启动时恢复执行
         }
+#endif
     }
 
     private func endBGTaskIfNeeded() {
+#if os(iOS) || os(tvOS)
+        lock.lock()
+        defer { lock.unlock() }
         if bgTaskID != .invalid {
             UIApplication.shared.endBackgroundTask(bgTaskID)
             bgTaskID = .invalid
         }
+#endif
     }
 }
 
