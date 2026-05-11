@@ -30,6 +30,10 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
     private let pendingUTypeRelationshipsWorker = PendingRelationshipsWorker<U>()
     private let pendingVTypeRelationshipsWorker = PendingRelationshipsWorker<V>()
     private let pendingWTypeRelationshipsWorker = PendingRelationshipsWorker<W>()
+    /// 无法匹配 U/V/W 的一对一引用（如 AssetCategory），等所有记录下载完后统一回填
+    /// key = 宿主对象主键，value = [(属性名, 被引用类型名, 被引用主键)]
+    private var pendingDirectObjectRefs: [AnyHashable: [(propName: String, refType: String, refKey: AnyHashable)]] = [:]
+    private let pendingDirectLock = NSLock()
     
     public init(
         realmConfiguration: Realm.Configuration = .defaultConfiguration,
@@ -98,16 +102,28 @@ extension SyncObject: Syncable {
     public func add(record: CKRecord) {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)
+            var localPendingDirectRefs: [(propName: String, refType: String, refKey: AnyHashable)] = []
             guard let object = T.parseFromRecord(
                 record: record,
                 realm: realm,
                 notificationToken: self.notificationToken,
                 pendingUTypeRelationshipsWorker: self.pendingUTypeRelationshipsWorker,
                 pendingVTypeRelationshipsWorker: self.pendingVTypeRelationshipsWorker,
-                pendingWTypeRelationshipsWorker: self.pendingWTypeRelationshipsWorker
+                pendingWTypeRelationshipsWorker: self.pendingWTypeRelationshipsWorker,
+                pendingDirectRefs: &localPendingDirectRefs
             ) else {
                 print("There is something wrong with the converson from cloud record to local object")
                 return
+            }
+            // 记录无法立即解析的一对一引用（被引用对象尚未下载到 Realm）
+            if !localPendingDirectRefs.isEmpty,
+               let pkName = T.sharedSchema()?.primaryKeyProperty?.name,
+               let ownerKey = object.value(forKey: pkName) as? AnyHashable {
+                self.pendingDirectLock.lock()
+                var existing = self.pendingDirectObjectRefs[ownerKey] ?? []
+                existing.append(contentsOf: localPendingDirectRefs)
+                self.pendingDirectObjectRefs[ownerKey] = existing
+                self.pendingDirectLock.unlock()
             }
             self.pendingUTypeRelationshipsWorker.realm = realm
             self.pendingVTypeRelationshipsWorker.realm = realm
@@ -183,6 +199,32 @@ extension SyncObject: Syncable {
         pendingUTypeRelationshipsWorker.resolvePendingListElements()
         pendingVTypeRelationshipsWorker.resolvePendingListElements()
         pendingWTypeRelationshipsWorker.resolvePendingListElements()
+        resolveDirectObjectReferences()
+    }
+
+    private func resolveDirectObjectReferences() {
+        pendingDirectLock.lock()
+        let pending = pendingDirectObjectRefs
+        pendingDirectObjectRefs = [:]
+        pendingDirectLock.unlock()
+
+        guard !pending.isEmpty else { return }
+
+        BackgroundWorker.shared.start { [self] in
+            let realm = try! Realm(configuration: realmConfiguration)
+            for (ownerKey, refs) in pending {
+                guard let owner = realm.object(ofType: T.self, forPrimaryKey: ownerKey),
+                      !owner.isInvalidated else { continue }
+                for ref in refs {
+                    guard let refObj = realm.dynamicObject(ofType: ref.refType, forPrimaryKey: ref.refKey) else { continue }
+                    do {
+                        try realm.write { owner.setValue(refObj, forKey: ref.propName) }
+                    } catch {
+                        print("IceCream: Failed to resolve pending direct reference:", error)
+                    }
+                }
+            }
+        }
     }
     
     public func cleanUp() {

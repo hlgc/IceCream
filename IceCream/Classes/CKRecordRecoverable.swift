@@ -19,7 +19,8 @@ extension CKRecordRecoverable where Self: Object {
         notificationToken: NotificationToken?,
         pendingUTypeRelationshipsWorker: PendingRelationshipsWorker<U>,
         pendingVTypeRelationshipsWorker: PendingRelationshipsWorker<V>,
-        pendingWTypeRelationshipsWorker: PendingRelationshipsWorker<W>
+        pendingWTypeRelationshipsWorker: PendingRelationshipsWorker<W>,
+        pendingDirectRefs: inout [(propName: String, refType: String, refKey: AnyHashable)]
     ) -> Self? {
         let o = Self()
         for prop in o.objectSchema.properties {
@@ -153,6 +154,9 @@ extension CKRecordRecoverable where Self: Object {
                                 pendingVTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
                             } else if schema.className == W.className() {
                                 pendingWTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
+                            } else {
+                                // 引用类型不在 U/V/W 中（如 AssetCategory）：记录供 resolvePendingRelationships 统一回填
+                                pendingDirectRefs.append((propName: prop.name, refType: ownerType, refKey: primaryKeyValue))
                             }
                         }
                     }
