@@ -65,53 +65,54 @@ extension CKRecordRecoverable where Self: Object {
                     recordValue = list
                 case .object:
                     guard let value = record.value(forKey: prop.name) as? [CKRecord.Reference] else { break }
-                    
+
                     let uList = List<U>()
                     let vList = List<V>()
                     let wList = List<W>()
-                    
+                    // 追踪每种类型的完整有序 key 列表及是否有缺失元素
+                    var uAllKeys: [AnyHashable] = []; var uHasMissing = false
+                    var vAllKeys: [AnyHashable] = []; var vHasMissing = false
+                    var wAllKeys: [AnyHashable] = []; var wHasMissing = false
+
                     for reference in value {
                         if let objectClassName = prop.objectClassName,
                            let schema = realm.schema.objectSchema.first(where: { $0.className == objectClassName }),
                            let primaryKeyValue = primaryKeyForRecordID(recordID: reference.recordID, schema: schema) as? AnyHashable {
                             if schema.className == U.className() {
+                                uAllKeys.append(primaryKeyValue)
                                 if let existObject = realm.object(ofType: U.self, forPrimaryKey: primaryKeyValue) {
                                     uList.append(existObject)
-                                } else {
-                                    pendingUTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
-                                }
+                                } else { uHasMissing = true }
                             }
-                            
                             if schema.className == V.className() {
+                                vAllKeys.append(primaryKeyValue)
                                 if let existObject = realm.object(ofType: V.self, forPrimaryKey: primaryKeyValue) {
                                     vList.append(existObject)
-                                } else {
-                                    pendingVTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
-                                }
+                                } else { vHasMissing = true }
                             }
-                            
                             if schema.className == W.className() {
+                                wAllKeys.append(primaryKeyValue)
                                 if let existObject = realm.object(ofType: W.self, forPrimaryKey: primaryKeyValue) {
                                     wList.append(existObject)
-                                } else {
-                                    pendingWTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
-                                }
+                                } else { wHasMissing = true }
                             }
-                            
                         }
                     }
-                    
-                    if prop.objectClassName == U.className() {
-                        recordValue = uList
+
+                    // 有缺失元素时记录完整有序 key 列表，回填时 removeAll + 重建保证顺序无重复
+                    if uHasMissing && !uAllKeys.isEmpty {
+                        pendingUTypeRelationshipsWorker.addListEntry(propertyName: prop.name, owner: o, orderedKeys: uAllKeys)
                     }
-                    
-                    if prop.objectClassName == V.className() {
-                        recordValue = vList
+                    if vHasMissing && !vAllKeys.isEmpty {
+                        pendingVTypeRelationshipsWorker.addListEntry(propertyName: prop.name, owner: o, orderedKeys: vAllKeys)
                     }
-                    
-                    if prop.objectClassName == W.className() {
-                        recordValue = wList
+                    if wHasMissing && !wAllKeys.isEmpty {
+                        pendingWTypeRelationshipsWorker.addListEntry(propertyName: prop.name, owner: o, orderedKeys: wAllKeys)
                     }
+
+                    if prop.objectClassName == U.className() { recordValue = uList }
+                    if prop.objectClassName == V.className() { recordValue = vList }
+                    if prop.objectClassName == W.className() { recordValue = wList }
                     
                 default:
                     break
