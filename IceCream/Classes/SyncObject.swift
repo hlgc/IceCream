@@ -117,10 +117,14 @@ extension SyncObject: Syncable {
             /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
             realm.beginWrite()
             realm.add(object, update: .modified)
-            if let token = self.notificationToken {
-                try! realm.commitWrite(withoutNotifying: [token])
-            } else {
-                try! realm.commitWrite()
+            do {
+                if let token = self.notificationToken {
+                    try realm.commitWrite(withoutNotifying: [token])
+                } else {
+                    try realm.commitWrite()
+                }
+            } catch {
+                print("IceCream: Realm write error in add:", error)
             }
         }
     }
@@ -136,10 +140,14 @@ extension SyncObject: Syncable {
             CreamAsset.deleteCreamAssetFile(with: recordID.recordName)
             realm.beginWrite()
             realm.delete(object)
-            if let token = self.notificationToken {
-                try! realm.commitWrite(withoutNotifying: [token])
-            } else {
-                try! realm.commitWrite()
+            do {
+                if let token = self.notificationToken {
+                    try realm.commitWrite(withoutNotifying: [token])
+                } else {
+                    try realm.commitWrite()
+                }
+            } catch {
+                print("IceCream: Realm write error in delete:", error)
             }
         }
     }

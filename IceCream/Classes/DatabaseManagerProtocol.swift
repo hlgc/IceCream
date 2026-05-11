@@ -44,6 +44,15 @@ protocol DatabaseManager: AnyObject {
     func cleanUp()
     func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void)
     func resetAllTokens()
+    func cancelFetch()
+
+    /// 是否正在执行 fetchChangesInDatabase（用于避免 pushAll 与拉取并发）
+    var isFetching: Bool { get }
+}
+
+extension DatabaseManager {
+    var isFetching: Bool { false }
+    func cancelFetch() {}
 }
 
 extension DatabaseManager {
@@ -138,31 +147,30 @@ extension DatabaseManager {
                         self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, completion: completion)
                     }
                 case .chunk:
-                    /// CloudKit规定单个请求中的最大项目数为400。
-                    /// 所以我觉得300应该是他们没问题的。
-                    //                let chunkedRecords = recordsToStore.chunkItUp(by: 300)
-                    //                for chunk in chunkedRecords {
-                    //                    self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: recordIDsToDelete, completion: completion)
-                    //                }
+                    // 超出 CloudKit 单次限制时分批发送，用 DispatchGroup 确保 completion 只被调用一次
                     let chunkedToStoreRecords = recordsToStore.chunkItUp(by: ErrorHandler.Constant.chunkSize)
                     let chunkedToDeleteRecordIDs = recordIDsToDelete.chunkItUp(by: ErrorHandler.Constant.chunkSize)
-                    
-                    if chunkedToStoreRecords.count >= chunkedToDeleteRecordIDs.count {
-                        for (index, chunk) in chunkedToStoreRecords.enumerated() {
-                            if index < chunkedToDeleteRecordIDs.count {
-                                self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: chunkedToDeleteRecordIDs[index], completion: completion)
-                            } else {
-                                self.syncRecordsToCloudKit(recordsToStore: chunk, recordIDsToDelete: [], completion: completion)
+                    let maxCount = max(chunkedToStoreRecords.count, chunkedToDeleteRecordIDs.count)
+
+                    let group = DispatchGroup()
+                    let errorLock = NSLock()
+                    var firstError: Error? = nil
+
+                    for i in 0..<maxCount {
+                        group.enter()
+                        let toStore = i < chunkedToStoreRecords.count ? chunkedToStoreRecords[i] : []
+                        let toDelete = i < chunkedToDeleteRecordIDs.count ? chunkedToDeleteRecordIDs[i] : []
+                        self.syncRecordsToCloudKit(recordsToStore: toStore, recordIDsToDelete: toDelete) { error in
+                            if let e = error {
+                                errorLock.lock()
+                                if firstError == nil { firstError = e }
+                                errorLock.unlock()
                             }
+                            group.leave()
                         }
-                    } else {
-                        for (index, chunk) in chunkedToDeleteRecordIDs.enumerated() {
-                            if index < chunkedToStoreRecords.count {
-                                self.syncRecordsToCloudKit(recordsToStore: chunkedToStoreRecords[index], recordIDsToDelete: chunk, completion: completion)
-                            } else {
-                                self.syncRecordsToCloudKit(recordsToStore: [], recordIDsToDelete: chunk, completion: completion)
-                            }
-                        }
+                    }
+                    group.notify(queue: .main) {
+                        completion?(firstError)
                     }
                 default:
                     completion?(error)

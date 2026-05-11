@@ -24,6 +24,17 @@ final class PrivateDatabaseManager: DatabaseManager {
     
     // 是否正在清理云端数据
     private var isDeleteiCloudData: Bool = false
+
+    // MARK: - Fetch 并发控制
+    private let stateLock = NSLock()
+    private var _isFetching = false
+    private var _pendingFetchCallbacks: [((Error?) -> Void)?] = []
+    private var _currentFetchOperation: CKFetchDatabaseChangesOperation?
+
+    var isFetching: Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return _isFetching
+    }
     
     public init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
@@ -31,48 +42,80 @@ final class PrivateDatabaseManager: DatabaseManager {
         self.database = container.privateCloudDatabase
     }
     
-    /// 云端数据变化
+    /// 云端数据变化（入口：有并发保护，重复触发时排队等待当前 fetch 完成后再执行一次）
     func fetchChangesInDatabase(_ callback: ((Error?) -> Void)?) {
+        stateLock.lock()
+        if _isFetching {
+            _pendingFetchCallbacks.append(callback)
+            stateLock.unlock()
+            return
+        }
+        _isFetching = true
+        stateLock.unlock()
+        performFetch(callback)
+    }
+
+    /// 实际执行 fetch，retry 路径直接调用此方法以保持 _isFetching = true 状态
+    private func performFetch(_ callback: ((Error?) -> Void)?) {
+        stateLock.lock()
+        _currentFetchOperation?.cancel()
         let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseChangeToken)
-        
-        /// 仅在提取过程完成时更新changeToken
+        _currentFetchOperation = changesOperation
+        stateLock.unlock()
+
         changesOperation.changeTokenUpdatedBlock = { [weak self] newToken in
             self?.databaseChangeToken = newToken
         }
-        
+
         changesOperation.fetchDatabaseChangesResultBlock = { [weak self] operationResult in
             guard let self = self else { return }
             switch operationResult {
             case .success((let newToken, _)):
-                databaseChangeToken = newToken
-                // 获取区域级别的更改
-                fetchChangesInZones(callback)
-                break
+                self.databaseChangeToken = newToken
+                self.fetchChangesInZones { error in
+                    self.completeFetch(callback, error: error)
+                }
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
                 case .success:
-                    break
+                    self.completeFetch(callback, error: nil)
                 case .retry(let timeToWait, _):
-                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
-                        self.fetchChangesInDatabase(callback)
-                    })
+                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
+                        self.performFetch(callback)
+                    }
                 case .recoverableError(let reason, _):
                     switch reason {
                     case .changeTokenExpired:
-                        /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
                         self.databaseChangeToken = nil
-                        self.fetchChangesInDatabase(callback)
+                        self.performFetch(callback)
                     default:
-                        return
+                        self.completeFetch(callback, error: error)
                     }
                 default:
-                    return
+                    self.completeFetch(callback, error: error)
                 }
-                break
             }
         }
-        
+
         database.add(changesOperation)
+    }
+
+    /// fetch 结束时调用：重置标志、通知排队回调、按需触发下一次 fetch
+    private func completeFetch(_ callback: ((Error?) -> Void)?, error: Error?) {
+        stateLock.lock()
+        _isFetching = false
+        _currentFetchOperation = nil
+        let pending = _pendingFetchCallbacks
+        _pendingFetchCallbacks = []
+        stateLock.unlock()
+
+        callback?(error)
+        pending.forEach { $0?(error) }
+
+        // 等待期间如有新请求排队，则补一次 fetch 以确保不漏云端变更
+        if !pending.isEmpty {
+            fetchChangesInDatabase(nil)
+        }
     }
     
     func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?) {
@@ -316,6 +359,19 @@ extension PrivateDatabaseManager {
     func resetAllTokens() {
         databaseChangeToken = nil
         syncObjects.forEach { $0.zoneChangesToken = nil }
+    }
+
+    func cancelFetch() {
+        stateLock.lock()
+        _currentFetchOperation?.cancel()
+        _currentFetchOperation = nil
+        _isFetching = false
+        let pending = _pendingFetchCallbacks
+        _pendingFetchCallbacks = []
+        stateLock.unlock()
+
+        let cancelError = NSError(domain: "IceCream", code: NSUserCancelledError, userInfo: [NSLocalizedDescriptionKey: "Fetch cancelled"])
+        pending.forEach { $0?(cancelError) }
     }
 
     func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {

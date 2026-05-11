@@ -36,6 +36,10 @@ public final class SyncEngine {
     public var syncAvailableCallback: ((Bool) -> Void)?
     /// 后台自动同步出错时的回调（如空间不足、网络错误）
     public var backgroundSyncErrorCallback: ((Error) -> Void)?
+    /// 初始 fetchChangesInDatabase 完成后的一次性回调（用于在拉取结束后再提示上传离线数据）
+    public var onInitialFetchComplete: ((Error?) -> Void)?
+    /// 是否正在执行 fetchChangesInDatabase
+    public var isFetching: Bool { databaseManager.isFetching }
 
     private let databaseManager: DatabaseManager
     
@@ -79,7 +83,10 @@ public final class SyncEngine {
                 isSyncAvailable = true
                 self.databaseManager.registerLocalDatabase()
                 self.databaseManager.createCustomZonesIfAllowed(nil)
-                self.databaseManager.fetchChangesInDatabase(nil)
+                self.databaseManager.fetchChangesInDatabase { [weak self] error in
+                    self?.onInitialFetchComplete?(error)
+                    self?.onInitialFetchComplete = nil
+                }
                 self.databaseManager.resumeLongLivedOperationIfPossible()
                 self.databaseManager.startObservingRemoteChanges()
                 self.databaseManager.startObservingTermination()
@@ -126,6 +133,7 @@ extension SyncEngine {
     /// - 清除本地数据后需从 iCloud 完整恢复
     /// - 重新开启同步时确保获取全部云端记录
     public func fullPull(completionHandler: ((Error?) -> Void)? = nil) {
+        databaseManager.cancelFetch()
         databaseManager.resetAllTokens()
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
