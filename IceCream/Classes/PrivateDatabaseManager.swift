@@ -30,6 +30,10 @@ final class PrivateDatabaseManager: DatabaseManager {
     private var _isFetching = false
     private var _pendingFetchCallbacks: [((Error?) -> Void)?] = []
     private var _currentFetchOperation: CKFetchDatabaseChangesOperation?
+    /// 每次启动新 fetch（含 cancelFetch 后重启）时递增。
+    /// completeFetch 持有启动时的 generation，只有匹配才真正重置标志，
+    /// 避免被取消的旧 operation 的回调干扰正在进行的新 fetch。
+    private var _fetchGeneration = 0
 
     var isFetching: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
@@ -58,7 +62,8 @@ final class PrivateDatabaseManager: DatabaseManager {
     /// 实际执行 fetch，retry 路径直接调用此方法以保持 _isFetching = true 状态
     private func performFetch(_ callback: ((Error?) -> Void)?) {
         stateLock.lock()
-        _currentFetchOperation?.cancel()
+        // 记录本轮 generation：cancelFetch 会递增该值，使旧 completeFetch 失效
+        let myGeneration = _fetchGeneration
         let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseChangeToken)
         _currentFetchOperation = changesOperation
         stateLock.unlock()
@@ -73,12 +78,12 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .success((let newToken, _)):
                 self.databaseChangeToken = newToken
                 self.fetchChangesInZones { error in
-                    self.completeFetch(callback, error: error)
+                    self.completeFetch(callback, error: error, generation: myGeneration)
                 }
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
                 case .success:
-                    self.completeFetch(callback, error: nil)
+                    self.completeFetch(callback, error: nil, generation: myGeneration)
                 case .retry(let timeToWait, _):
                     ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
                         self.performFetch(callback)
@@ -89,10 +94,10 @@ final class PrivateDatabaseManager: DatabaseManager {
                         self.databaseChangeToken = nil
                         self.performFetch(callback)
                     default:
-                        self.completeFetch(callback, error: error)
+                        self.completeFetch(callback, error: error, generation: myGeneration)
                     }
                 default:
-                    self.completeFetch(callback, error: error)
+                    self.completeFetch(callback, error: error, generation: myGeneration)
                 }
             }
         }
@@ -100,9 +105,13 @@ final class PrivateDatabaseManager: DatabaseManager {
         database.add(changesOperation)
     }
 
-    /// fetch 结束时调用：重置标志、通知排队回调、按需触发下一次 fetch
-    private func completeFetch(_ callback: ((Error?) -> Void)?, error: Error?) {
+    /// fetch 结束时调用：generation 不匹配（已被 cancelFetch 作废）则直接返回，避免干扰新 fetch
+    private func completeFetch(_ callback: ((Error?) -> Void)?, error: Error?, generation: Int) {
         stateLock.lock()
+        guard _fetchGeneration == generation else {
+            stateLock.unlock()
+            return
+        }
         _isFetching = false
         _currentFetchOperation = nil
         let pending = _pendingFetchCallbacks
@@ -366,11 +375,13 @@ extension PrivateDatabaseManager {
         _currentFetchOperation?.cancel()
         _currentFetchOperation = nil
         _isFetching = false
+        _fetchGeneration += 1   // 使正在运行的 operation 的 completeFetch 失效
         let pending = _pendingFetchCallbacks
         _pendingFetchCallbacks = []
         stateLock.unlock()
 
-        let cancelError = NSError(domain: "IceCream", code: NSUserCancelledError, userInfo: [NSLocalizedDescriptionKey: "Fetch cancelled"])
+        let cancelError = NSError(domain: "IceCream", code: NSUserCancelledError,
+                                  userInfo: [NSLocalizedDescriptionKey: "Fetch cancelled"])
         pending.forEach { $0?(cancelError) }
     }
 
