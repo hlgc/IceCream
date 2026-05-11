@@ -34,7 +34,9 @@ public final class SyncEngine {
         }
     }
     public var syncAvailableCallback: ((Bool) -> Void)?
-    
+    /// 后台自动同步出错时的回调（如空间不足、网络错误）
+    public var backgroundSyncErrorCallback: ((Error) -> Void)?
+
     private let databaseManager: DatabaseManager
     
     public convenience init(objects: [Syncable], databaseScope: CKDatabase.Scope = .private, container: CKContainer = .default()) {
@@ -64,6 +66,11 @@ public final class SyncEngine {
             syncDateCallback?(date)
         }
         databaseManager.prepare()
+        databaseManager.syncObjects.forEach { [weak self] syncable in
+            syncable.backgroundSyncErrorCallback = { error in
+                self?.backgroundSyncErrorCallback?(error)
+            }
+        }
         databaseManager.container.accountStatus { [weak self] (status, error) in
             guard let self = self else { return }
             switch status {

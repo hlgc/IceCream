@@ -34,5 +34,7 @@ public protocol Syncable: AnyObject {
     
     /// Callback
     var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID], _ completion: ((Error?) -> ())? ) -> ())? { get set }
-    
+    /// 后台自动同步出错（如 quotaExceeded）时的回调
+    var backgroundSyncErrorCallback: ((Error) -> Void)? { get set }
+
 }

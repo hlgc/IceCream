@@ -22,6 +22,8 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
     private var notificationToken: NotificationToken?
     
     public var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID], _ completion: ((Error?) -> ())?) -> ())?
+    /// 后台自动同步发生错误时的回调（如空间不足）
+    public var backgroundSyncErrorCallback: ((Error) -> Void)?
     
     public let realmConfiguration: Realm.Configuration
     
@@ -157,7 +159,11 @@ extension SyncObject: Syncable {
                     let recordIDsToDelete = modifications.filter { $0 < collection.count }.map { collection[$0] }.filter { $0.isDeleted }.map { $0.recordID }
                     
                     guard recordsToStore.count > 0 || recordIDsToDelete.count > 0 else { return }
-                    self.pipeToEngine?(recordsToStore, recordIDsToDelete, nil)
+                    self.pipeToEngine?(recordsToStore, recordIDsToDelete, { [weak self] error in
+                        if let error = error {
+                            self?.backgroundSyncErrorCallback?(error)
+                        }
+                    })
                 case .error(_):
                     break
                 }
