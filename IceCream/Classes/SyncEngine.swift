@@ -110,8 +110,16 @@ extension SyncEngine {
     
     /// 获取CloudKit上的数据并与local合并
     ///
-    /// - 参数completionHandler:在“privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
+    /// - 参数completionHandler:在”privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
     public func pull(completionHandler: ((Error?) -> Void)? = nil) {
+        databaseManager.fetchChangesInDatabase(completionHandler)
+    }
+
+    /// 重置所有变更令牌后全量拉取 CloudKit 数据，适用于：
+    /// - 清除本地数据后需从 iCloud 完整恢复
+    /// - 重新开启同步时确保获取全部云端记录
+    public func fullPull(completionHandler: ((Error?) -> Void)? = nil) {
+        databaseManager.resetAllTokens()
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
     

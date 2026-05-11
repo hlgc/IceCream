@@ -43,6 +43,7 @@ protocol DatabaseManager: AnyObject {
     
     func cleanUp()
     func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void)
+    func resetAllTokens()
 }
 
 extension DatabaseManager {

@@ -168,14 +168,20 @@ extension CKRecordConvertible where Self: Object {
                 guard let objectName = prop.objectClassName else { break }
                 if objectName == CreamLocation.className(), let creamLocation = item as? CreamLocation {
                     r[prop.name] = creamLocation.location
-                } else if objectName == CreamAsset.className(), let creamAsset = item as? CreamAsset {
-                    // 如果对象是CreamAsset，则用其包装的CKAsset值设置记录
-                    r[prop.name] = creamAsset.asset
-                    if !creamAsset.shouldOverwrite {
-                        r[ASSET_SHOULD_OVERWRITE] = false
-                    }
-                    if let fileExtension = creamAsset.fileExtension {
-                        r[ASSET_EXTENSION] = fileExtension
+                } else if objectName == CreamAsset.className() {
+                    // 只有文件在本地真实存在才写入 CKAsset。
+                    // 若 imageAsset 为 nil（文件下载失败）或文件尚未下载，跳过此 key。
+                    // .changedKeys 保存策略下，未设置的 key 不会覆盖 CloudKit 现有值，
+                    // 从而避免多设备场景中因本地文件缺失导致云端图片被清除。
+                    if let creamAsset = item as? CreamAsset,
+                       FileManager.default.fileExists(atPath: creamAsset.filePath.path) {
+                        r[prop.name] = creamAsset.asset
+                        if !creamAsset.shouldOverwrite {
+                            r[ASSET_SHOULD_OVERWRITE] = false
+                        }
+                        if let fileExtension = creamAsset.fileExtension {
+                            r[ASSET_EXTENSION] = fileExtension
+                        }
                     }
                 } else if let owner = item as? CKRecordConvertible {
                     // 处理一对一关系: https://realm.io/docs/swift/latest/#many-to-one

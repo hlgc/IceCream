@@ -121,6 +121,10 @@ final class PublicDatabaseManager: DatabaseManager {
     }
     
     func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
-        
+
+    }
+
+    func resetAllTokens() {
+        // 公共数据库不使用 server change token，无需重置
     }
 }

@@ -313,6 +313,11 @@ extension PrivateDatabaseManager {
         }
     }
     
+    func resetAllTokens() {
+        databaseChangeToken = nil
+        syncObjects.forEach { $0.zoneChangesToken = nil }
+    }
+
     func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
         guard zoneIds.count > 0 else {
             completion(.success(()))
