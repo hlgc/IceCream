@@ -74,24 +74,29 @@ extension DatabaseManager {
     }
 
     func resumeLongLivedOperationIfPossible() {
-        container.fetchAllLongLivedOperationIDs { [weak self]( opeIDs, error) in
+        container.fetchAllLongLivedOperationIDs { [weak self] opeIDs, error in
             guard let self = self, error == nil, let ids = opeIDs else { return }
             for id in ids {
-                self.container.fetchLongLivedOperation(withID: id, completionHandler: { [weak self](ope, error) in
+                self.container.fetchLongLivedOperation(withID: id, completionHandler: { [weak self] ope, error in
                     guard let self = self, error == nil else { return }
                     if let modifyOp = ope as? CKModifyRecordsOperation {
-                        modifyOp.modifyRecordsResultBlock = { _ in
-                            print("Resume modify records success!")
-                            /// 更新同步时间
-                            self.syncDateCallback?(Date())
+                        modifyOp.modifyRecordsResultBlock = { [weak self] result in
+                            switch result {
+                            case .success:
+                                print("IceCream: resumed long-lived modify operation succeeded")
+                                self?.syncDateCallback?(Date())
+                            case .failure(let opError):
+                                print("IceCream: resumed long-lived modify operation failed: \(opError.localizedDescription)")
+                                switch ErrorHandler.shared.resultType(with: opError) {
+                                case .retry(let timeToWait, _):
+                                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
+                                        self?.resumeLongLivedOperationIfPossible()
+                                    }
+                                default:
+                                    break
+                                }
+                            }
                         }
-//                        modifyOp.modifyRecordsCompletionBlock = { (_,_,_) in
-//                            print("Resume modify records success!")
-//                        }
-                        // doc中的苹果示例代码(https://developer.apple.com/documentation/cloudkit/ckoperation/#1666033)
-                        // 告诉我们在容器中添加操作。但无论如何，它在iOS 15测试版上崩溃了。
-                        // 而崩溃日志告诉我们"CKDatabaseOperations必须提交给CKDatabase"。
-                        // 所以我猜守护进程里肯定有什么东西变了。我们临时添加了这个可用性检查。
                         database.add(modifyOp)
                     }
                 })
@@ -196,6 +201,16 @@ extension DatabaseManager {
                         let merged = resolvePartialConflicts(error: error, clientRecords: recordsToStore)
                         guard !merged.isEmpty else { completion?(error); return }
                         self.syncRecordsToCloudKit(recordsToStore: merged, recordIDsToDelete: recordIDsToDelete, retryCount: 0, completion: completion)
+                    case .zoneNotFound:
+                        self.syncObjects.forEach { $0.isCustomZoneCreated = false }
+                        self.createCustomZonesIfAllowed { [weak self] zoneError in
+                            guard let self = self else { return }
+                            if zoneError != nil {
+                                completion?(error)
+                                return
+                            }
+                            self.syncRecordsToCloudKit(recordsToStore: recordsToStore, recordIDsToDelete: recordIDsToDelete, retryCount: 0, completion: completion)
+                        }
                     case .network:
                         guard retryCount < maxNetworkRetries else {
                             print("IceCream: network retry exhausted (\(maxNetworkRetries) attempts)")

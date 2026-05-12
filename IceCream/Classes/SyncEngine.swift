@@ -14,19 +14,34 @@ import CloudKit
 /// 3.它把CKRecordZone的东西交给SyncObject，这样它就可以对本地领域数据库产生影响
 
 public final class SyncEngine {
-    /// 同步时间
+
+    // MARK: - Sync Date
+
+    private static let syncDateKey = "icecream.sync.lastSyncDate"
+
     public var syncDateCallback: ((Date) -> Void)?
     public var syncDate: Date? {
         set {
-            UserDefaults.standard.set(newValue, forKey: #file+#function)
+            UserDefaults.standard.set(newValue, forKey: SyncEngine.syncDateKey)
         }
-
         get {
-            UserDefaults.standard.object(forKey: #file+#function) as? Date
+            UserDefaults.standard.object(forKey: SyncEngine.syncDateKey) as? Date
         }
     }
 
-    /// 同步状态
+    // MARK: - Account Change
+
+    public enum AccountChangeType {
+        case signIn
+        case signOut
+        case switchAccount
+    }
+    /// iCloud 账户变化回调（登入/登出/切换账户）
+    public var accountChangeCallback: ((AccountChangeType) -> Void)?
+    private var lastKnownAccountID: String?
+
+    // MARK: - Sync State
+
     private var isSyncAvailable: Bool = true {
         didSet {
             syncAvailableCallback?(isSyncAvailable)
@@ -48,6 +63,7 @@ public final class SyncEngine {
     }
 
     private let databaseManager: DatabaseManager
+    private var hasCompletedInitialSetup = false
 
     private var isPushInProgress = false
     private let pushLock = NSLock()
@@ -72,9 +88,7 @@ public final class SyncEngine {
 
     private func setup() {
         databaseManager.syncDateCallback = { [weak self] date in
-            guard let self = self else {
-                return
-            }
+            guard let self = self else { return }
             syncDate = date
             syncDateCallback?(date)
         }
@@ -84,55 +98,113 @@ public final class SyncEngine {
                 self?.backgroundSyncErrorCallback?(error)
             }
         }
-        databaseManager.container.accountStatus { [weak self] (status, error) in
+        startObservingAccountChanges()
+        checkAccountAndActivate()
+    }
+
+    // MARK: - Account Monitoring
+
+    private func startObservingAccountChanges() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAccountChanged),
+            name: .CKAccountChanged,
+            object: nil
+        )
+    }
+
+    @objc private func handleAccountChanged() {
+        databaseManager.container.accountStatus { [weak self] status, _ in
             guard let self = self else { return }
             switch status {
             case .available:
-                // 可用
-                isSyncAvailable = true
-                self.databaseManager.registerLocalDatabase()
-                self.databaseManager.createCustomZonesIfAllowed(nil)
-                let doFetch = { [weak self] in
+                self.databaseManager.container.fetchUserRecordID { [weak self] recordID, _ in
                     guard let self = self else { return }
-                    self.databaseManager.fetchChangesInDatabase { [weak self] error in
-                        self?.onInitialFetchComplete?(error)
-                        self?.onInitialFetchComplete = nil
+                    let newID = recordID?.recordName
+                    if let lastID = self.lastKnownAccountID, let newID = newID, lastID != newID {
+                        self.accountChangeCallback?(.switchAccount)
+                    } else if self.lastKnownAccountID == nil, newID != nil {
+                        self.accountChangeCallback?(.signIn)
+                    }
+                    self.lastKnownAccountID = newID
+
+                    if !self.hasCompletedInitialSetup {
+                        self.activateSync()
+                    } else {
+                        self.isSyncAvailable = true
+                        self.databaseManager.fetchChangesInDatabase(nil)
                     }
                 }
-                if let action = self.beforeFetchAction {
-                    self.beforeFetchAction = nil
-                    action(doFetch)
-                } else {
-                    doFetch()
-                }
-                self.databaseManager.resumeLongLivedOperationIfPossible()
-                self.databaseManager.startObservingRemoteChanges()
-                self.databaseManager.startObservingTermination()
-                self.databaseManager.createDatabaseSubscriptionIfHaveNot()
             case .noAccount, .restricted:
-                // 收限制的或者没有帐号
+                if self.lastKnownAccountID != nil {
+                    self.accountChangeCallback?(.signOut)
+                    self.lastKnownAccountID = nil
+                }
                 guard self.databaseManager is PublicDatabaseManager else {
-                    isSyncAvailable = false
-                    break
+                    self.isSyncAvailable = false
+                    return
+                }
+                self.isSyncAvailable = false
+            case .temporarilyUnavailable, .couldNotDetermine:
+                self.isSyncAvailable = false
+            @unknown default:
+                self.isSyncAvailable = false
+            }
+        }
+    }
+
+    private func checkAccountAndActivate() {
+        databaseManager.container.accountStatus { [weak self] (status, _) in
+            guard let self = self else { return }
+            switch status {
+            case .available:
+                self.databaseManager.container.fetchUserRecordID { [weak self] recordID, _ in
+                    self?.lastKnownAccountID = recordID?.recordName
+                    self?.activateSync()
+                }
+            case .noAccount, .restricted:
+                guard self.databaseManager is PublicDatabaseManager else {
+                    self.isSyncAvailable = false
+                    return
                 }
                 self.databaseManager.fetchChangesInDatabase(nil)
                 self.databaseManager.resumeLongLivedOperationIfPossible()
                 self.databaseManager.startObservingRemoteChanges()
                 self.databaseManager.startObservingTermination()
                 self.databaseManager.createDatabaseSubscriptionIfHaveNot()
-            case .temporarilyUnavailable:
-                // 暂时不可用
-                isSyncAvailable = false
-                break
-            case .couldNotDetermine:
-                // 不能判断
-                isSyncAvailable = false
-                break
+            case .temporarilyUnavailable, .couldNotDetermine:
+                self.isSyncAvailable = false
             @unknown default:
-                isSyncAvailable = false
-                break
+                self.isSyncAvailable = false
             }
         }
+    }
+
+    /// 账户可用时执行完整的同步激活流程（仅执行一次）
+    private func activateSync() {
+        isSyncAvailable = true
+        if !hasCompletedInitialSetup {
+            hasCompletedInitialSetup = true
+            databaseManager.registerLocalDatabase()
+        }
+        databaseManager.createCustomZonesIfAllowed(nil)
+        let doFetch = { [weak self] in
+            guard let self = self else { return }
+            self.databaseManager.fetchChangesInDatabase { [weak self] error in
+                self?.onInitialFetchComplete?(error)
+                self?.onInitialFetchComplete = nil
+            }
+        }
+        if let action = self.beforeFetchAction {
+            self.beforeFetchAction = nil
+            action(doFetch)
+        } else {
+            doFetch()
+        }
+        databaseManager.resumeLongLivedOperationIfPossible()
+        databaseManager.startObservingRemoteChanges()
+        databaseManager.startObservingTermination()
+        databaseManager.createDatabaseSubscriptionIfHaveNot()
     }
 
 }

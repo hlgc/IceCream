@@ -97,6 +97,15 @@ final class PrivateDatabaseManager: DatabaseManager {
                     case .changeTokenExpired:
                         self.databaseChangeToken = nil
                         self.performFetch(callback)
+                    case .zoneNotFound:
+                        self.syncObjects.forEach { $0.isCustomZoneCreated = false }
+                        self.createCustomZonesIfAllowed { [weak self] _ in
+                            self?.databaseChangeToken = nil
+                            self?.performFetch(callback)
+                        }
+                    case .network:
+                        print("IceCream: database fetch network error, will retry on next cycle")
+                        self.completeFetch(callback, error: error, generation: myGeneration)
                     default:
                         self.completeFetch(callback, error: error, generation: myGeneration)
                     }
@@ -133,42 +142,29 @@ final class PrivateDatabaseManager: DatabaseManager {
 
     func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?) {
         let zonesToCreate = syncObjects.filter { !$0.isCustomZoneCreated }.map { CKRecordZone(zoneID: $0.zoneID) }
-        guard zonesToCreate.count > 0 else { return }
+        guard !zonesToCreate.isEmpty else {
+            callback?(nil)
+            return
+        }
 
         let modifyOp = CKModifyRecordZonesOperation(recordZonesToSave: zonesToCreate, recordZoneIDsToDelete: nil)
         modifyOp.modifyRecordZonesResultBlock = { [weak self] operationResult in
             guard let self = self else { return }
             switch operationResult {
             case .success():
-                self.syncObjects.forEach { object in
-                    object.isCustomZoneCreated = true
-
-                    if self.isDeleteiCloudData {
-                        return
-                    }
-                    // 当我们在第一步注册本地数据库时，我们必须强制推送本地对象
-                    // 还没有被捕获到CloudKit中使数据同步
-                    DispatchQueue.main.async {
-                        object.pushLocalObjectsToCloudKit(callback)
-                    }
-                }
-                if !self.isDeleteiCloudData {
-                    return
-                }
+                self.syncObjects.forEach { $0.isCustomZoneCreated = true }
                 callback?(nil)
-                break
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
                 case .success:
-                    break
+                    callback?(nil)
                 case .retry(let timeToWait, _):
                     ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait, block: {
                         self.createCustomZonesIfAllowed(callback)
                     })
                 default:
-                    return
+                    callback?(error)
                 }
-                break
             }
         }
 
@@ -264,7 +260,6 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .success((let token, _, _)):
                 guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
                 syncObject.zoneChangesToken = token
-                break
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
                 case .success:
@@ -276,15 +271,25 @@ final class PrivateDatabaseManager: DatabaseManager {
                 case .recoverableError(let reason, _):
                     switch reason {
                     case .changeTokenExpired:
-                        /// previousServerChangeToken值太旧，客户端必须从头开始重新同步
-                        guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
+                        guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { break }
                         syncObject.zoneChangesToken = nil
                         self.fetchChangesInZones(callback)
+                    case .zoneNotFound:
+                        guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { break }
+                        syncObject.isCustomZoneCreated = false
+                        self.createCustomZonesIfAllowed { [weak self] _ in
+                            guard let syncObject = self?.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
+                            syncObject.zoneChangesToken = nil
+                            self?.fetchChangesInZones(callback)
+                        }
+                    case .network:
+                        print("IceCream: zone fetch network error for \(zoneId), will retry on next fetch cycle")
+                        callback?(error)
                     default:
-                        return
+                        callback?(error)
                     }
                 default:
-                    return
+                    callback?(error)
                 }
             }
         }

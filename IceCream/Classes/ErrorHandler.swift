@@ -30,23 +30,16 @@ struct ErrorHandler {
         case fail(reason: CKOperationFailReason, message: String)
     }
     
-    /// CloudKit失败的原因可分为以下8种情况
     enum CKOperationFailReason {
-        /// 更改令牌已过期
         case changeTokenExpired
-        /// 网络错误
         case network
-        /// 超过配额
         case quotaExceeded
-        /// 部分失效
         case partialFailure
-        /// 服务器记录已更改
         case serverRecordChanged
-        /// 分享相关的
         case shareRelated
-        /// 未处理的错误代码
+        /// Zone 不存在（未创建或被用户从设置中删除）
+        case zoneNotFound
         case unhandledErrorCode
-        /// 未知
         case unknown
     }
     
@@ -75,7 +68,6 @@ struct ErrorHandler {
                 return .fail(reason: .unknown, message: message)
             }
             
-        // 可恢复错误
         case .networkUnavailable,
              .networkFailure:
             print("ErrorHandler.recoverableError: \(message)")
@@ -86,6 +78,9 @@ struct ErrorHandler {
         case .serverRecordChanged:
             print("ErrorHandler.recoverableError: \(message)")
             return .recoverableError(reason: .serverRecordChanged, message: message)
+        case .zoneNotFound, .userDeletedZone:
+            print("ErrorHandler.recoverableError: \(message)")
+            return .recoverableError(reason: .zoneNotFound, message: message)
         case .partialFailure:
             // Normally it shouldn't happen since if CKOperation `isAtomic` set to true
             if let dictionary = e.userInfo[CKPartialErrorsByItemIDKey] as? NSDictionary {
