@@ -86,6 +86,10 @@ public final class SyncEngine {
         setup()
     }
 
+    deinit {
+        databaseManager.cancelFetch()
+    }
+
     private func setup() {
         databaseManager.syncDateCallback = { [weak self] date in
             guard let self = self else { return }

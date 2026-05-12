@@ -45,6 +45,18 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
         self.realmConfiguration = realmConfiguration
     }
 
+    deinit {
+        // notificationToken 是在 BackgroundWorker 线程上创建的，必须在同一线程上销毁。
+        // deinit 可能被调用于任意线程（如 CloudKit 回调队列），所以显式派发到 BackgroundWorker。
+        let token = notificationToken
+        notificationToken = nil
+        if token != nil {
+            BackgroundWorker.shared.start {
+                token?.invalidate()
+            }
+        }
+    }
+
 }
 
 // MARK: - Zone information

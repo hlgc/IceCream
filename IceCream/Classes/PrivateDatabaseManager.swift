@@ -81,8 +81,8 @@ final class PrivateDatabaseManager: DatabaseManager {
             switch operationResult {
             case .success((let newToken, _)):
                 self.databaseChangeToken = newToken
-                self.fetchChangesInZones { error in
-                    self.completeFetch(callback, error: error, generation: myGeneration)
+                self.fetchChangesInZones { [weak self] error in
+                    self?.completeFetch(callback, error: error, generation: myGeneration)
                 }
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
