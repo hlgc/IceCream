@@ -171,18 +171,31 @@ public class CreamAsset: Object {
     /// - 返回:如果创建成功，则返回CreamAsset
     public static func create(objectID: String, propName: String, url: URL, shouldOverwrite: Bool = true, fileExtension: String? = nil) -> CreamAsset? {
         let creamAsset = CreamAsset(objectID: objectID, propName: propName, shouldOverwrite: shouldOverwrite, fileExtension: fileExtension)
-        if shouldOverwrite {
-            do {
-                try FileManager.default.removeItem(at: creamAsset.filePath)
-            } catch {
-                // Os.log remove item failed error here
-            }
+        let destPath = creamAsset.filePath
+        let destExists = FileManager.default.fileExists(atPath: destPath.path)
+
+        if destExists && !shouldOverwrite {
+            return creamAsset
         }
-        if !FileManager.default.fileExists(atPath: creamAsset.filePath.path) {
+
+        if destExists && shouldOverwrite {
+            // 先复制到临时文件，成功后再原子替换。
+            // 原先逻辑是"先删再复制"：若源 URL（CloudKit 临时文件）已过期，
+            // 本地文件被删掉后复制失败，图片永久丢失。
+            let tempURL = destPath.deletingLastPathComponent()
+                .appendingPathComponent("~ictmp_\(UUID().uuidString)")
             do {
-                try FileManager.default.copyItem(at: url, to: creamAsset.filePath)
+                try FileManager.default.copyItem(at: url, to: tempURL)
+                _ = try? FileManager.default.replaceItemAt(destPath, withItemAt: tempURL)
             } catch {
-                /// Os.log copy item failed
+                // 复制失败：保留原始本地文件，返回现有 CreamAsset（内容未变）
+                try? FileManager.default.removeItem(at: tempURL)
+                return creamAsset
+            }
+        } else {
+            do {
+                try FileManager.default.copyItem(at: url, to: destPath)
+            } catch {
                 return nil
             }
         }

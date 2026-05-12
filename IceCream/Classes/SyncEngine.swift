@@ -38,6 +38,9 @@ public final class SyncEngine {
     public var backgroundSyncErrorCallback: ((Error) -> Void)?
     /// 初始 fetchChangesInDatabase 完成后的一次性回调（用于在拉取结束后再提示上传离线数据）
     public var onInitialFetchComplete: ((Error?) -> Void)?
+    /// 初始 fetch 开始前的预处理 block。若设置，在 fetchChangesInDatabase 前调用；
+    /// completion 必须在异步操作完成后调用以触发 fetch（例如：先推送再拉取）。
+    public var beforeFetchAction: ((@escaping () -> Void) -> Void)?
     /// 是否正在执行 fetchChangesInDatabase
     public var isFetching: Bool { databaseManager.isFetching }
 
@@ -83,9 +86,18 @@ public final class SyncEngine {
                 isSyncAvailable = true
                 self.databaseManager.registerLocalDatabase()
                 self.databaseManager.createCustomZonesIfAllowed(nil)
-                self.databaseManager.fetchChangesInDatabase { [weak self] error in
-                    self?.onInitialFetchComplete?(error)
-                    self?.onInitialFetchComplete = nil
+                let doFetch = { [weak self] in
+                    guard let self = self else { return }
+                    self.databaseManager.fetchChangesInDatabase { [weak self] error in
+                        self?.onInitialFetchComplete?(error)
+                        self?.onInitialFetchComplete = nil
+                    }
+                }
+                if let action = self.beforeFetchAction {
+                    self.beforeFetchAction = nil
+                    action(doFetch)
+                } else {
+                    doFetch()
                 }
                 self.databaseManager.resumeLongLivedOperationIfPossible()
                 self.databaseManager.startObservingRemoteChanges()
