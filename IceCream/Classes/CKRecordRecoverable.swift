@@ -137,10 +137,19 @@ extension CKRecordRecoverable where Self: Object {
             case .data:
                 recordValue = record.value(forKey: prop.name) as? Data
             case .object:
-                if let location = record.value(forKey: prop.name) as? CLLocation {
+                if let asset = record.value(forKey: prop.name) as? CKAsset {
+                    if let parsed = CreamAsset.parse(from: prop.name, record: record, asset: asset) {
+                        recordValue = parsed
+                    } else {
+                        // CKAsset 存在但 fileURL 无效或复制失败（下载未完成/临时文件已清理）
+                        // 跳过该字段写入，保留本地已有图片，防止 nil 覆盖
+                        continue
+                    }
+                } else if prop.objectClassName == CreamAsset.className() && record.value(forKey: prop.name) == nil {
+                    // 云端该字段显式为 nil（用户主动删除图片），允许清空
+                    recordValue = nil
+                } else if let location = record.value(forKey: prop.name) as? CLLocation {
                     recordValue = CreamLocation.make(location: location)
-                } else if let asset = record.value(forKey: prop.name) as? CKAsset {
-                    recordValue = CreamAsset.parse(from: prop.name, record: record, asset: asset)
                 } else if let owner = record.value(forKey: prop.name) as? CKRecord.Reference,
                     let ownerType = prop.objectClassName,
                     let schema = realm.schema.objectSchema.first(where: { $0.className == ownerType })
@@ -156,12 +165,10 @@ extension CKRecordRecoverable where Self: Object {
                             } else if schema.className == W.className() {
                                 pendingWTypeRelationshipsWorker.addToPendingList(elementPrimaryKeyValue: primaryKeyValue, propertyName: prop.name, owner: o)
                             } else {
-                                // 引用类型不在 U/V/W 中（如 AssetCategory）：记录供 resolvePendingRelationships 统一回填
                                 pendingDirectRefs.append((propName: prop.name, refType: ownerType, refKey: primaryKeyValue))
                             }
                         }
                     }
-                    // 因为当对象转换为CKRecord时，我们使用主键作为recordName
                 }
             default:
                 print("Other types will be supported in the future.")

@@ -241,9 +241,13 @@ extension CreamAsset {
         }
     }
     
-    /// 删除对象时。我们需要删除相关的CreamAsset文件
+    /// 删除对象时，删除相关的 CreamAsset 文件。
+    /// 使用精确前缀匹配，避免子字符串碰撞误删其他对象的文件。
+    /// 文件名格式为 "{objectID}_{propName}" 或 "{objectID}_{propName}.{ext}"
     public static func deleteCreamAssetFile(with id: String) {
-        let needToDeleteCacheFiles = creamAssetFilesPaths().filter { $0.contains(id) }
+        let needToDeleteCacheFiles = creamAssetFilesPaths().filter {
+            $0.hasPrefix(id + "_") || $0 == id
+        }
         excecuteDeletions(in: needToDeleteCacheFiles)
     }
     
