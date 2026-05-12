@@ -43,6 +43,9 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
         wListElementType: W.Type? = nil
     ) {
         self.realmConfiguration = realmConfiguration
+        pendingUTypeRelationshipsWorker.ownerTypeName = T.className()
+        pendingVTypeRelationshipsWorker.ownerTypeName = T.className()
+        pendingWTypeRelationshipsWorker.ownerTypeName = T.className()
     }
 
     deinit {
