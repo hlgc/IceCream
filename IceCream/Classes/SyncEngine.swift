@@ -194,7 +194,7 @@ extension SyncEngine {
             let syncObject = syncObjects[index]
             syncObject.pushLocalObjectsToCloudKit { error in
                 if let error = error {
-                    pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                    self.pushLock.lock(); self.isPushInProgress = false; self.pushLock.unlock()
                     completion(.failure(error))
                     return
                 }
@@ -244,7 +244,7 @@ extension SyncEngine {
             }
             syncObjects[index].pushOfflineObjectsToCloudKit(since: date) { error in
                 if let error = error {
-                    pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                    self.pushLock.lock(); self.isPushInProgress = false; self.pushLock.unlock()
                     completion(.failure(error))
                     return
                 }
