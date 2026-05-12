@@ -81,8 +81,8 @@ final class PrivateDatabaseManager: DatabaseManager {
             switch operationResult {
             case .success((let newToken, _)):
                 self.databaseChangeToken = newToken
-                self.fetchChangesInZones { [weak self] error in
-                    self?.completeFetch(callback, error: error, generation: myGeneration)
+                self.fetchChangesInZones { error in
+                    self.completeFetch(callback, error: error, generation: myGeneration)
                 }
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
@@ -131,10 +131,13 @@ final class PrivateDatabaseManager: DatabaseManager {
         _pendingFetchCallbacks = []
         stateLock.unlock()
 
+        if error == nil && _fetchedRecordCount > 0 {
+            syncDateCallback?(Date())
+        }
+
         callback?(error)
         pending.forEach { $0?(error) }
 
-        // 等待期间如有新请求排队，则补一次 fetch 以确保不漏云端变更
         if !pending.isEmpty {
             fetchChangesInDatabase(nil)
         }
@@ -230,8 +233,6 @@ final class PrivateDatabaseManager: DatabaseManager {
         }
 
         changesOp.recordWasChangedBlock = { [weak self] recordID, recordResult in
-            /// 云端会返回上次zoneChangesToken以来修改的记录，这里需要做本地缓存。
-            /// 处理记录:
             guard let self = self else { return }
             switch recordResult {
             case .success(let record):
@@ -239,8 +240,6 @@ final class PrivateDatabaseManager: DatabaseManager {
                 syncObject.add(record: record)
                 self._fetchedRecordCount += 1
                 self.recordFetchedCallback?(self._fetchedRecordCount)
-                /// 更新同步时间
-                syncDateCallback?(Date())
             default:
                 break
             }
@@ -250,8 +249,6 @@ final class PrivateDatabaseManager: DatabaseManager {
             guard let self = self else { return }
             guard let syncObject = self.syncObjects.first(where: { $0.zoneID == recordId.zoneID }) else { return }
             syncObject.delete(recordID: recordId)
-            /// 更新同步时间
-            syncDateCallback?(Date())
         }
 
         changesOp.recordZoneFetchResultBlock = { [weak self] zoneId, result in
