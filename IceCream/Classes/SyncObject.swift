@@ -132,10 +132,13 @@ extension SyncObject: Syncable {
             /// 如果您的模型类包含主键，您可以让Realm使用Realm()根据它们的主键值智能地更新或添加对象。添加(_:更新:)。
             /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
 
-            // 将 CKRecord 的系统字段（含 recordChangeTag）归档存入对象，
-            // 以便推送时还原出带 changeTag 的 CKRecord，支持 .ifServerRecordUnchanged 策略。
-            if let systemFieldsData = try? NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true) {
-                object.ckSystemFields = systemFieldsData
+            // 将 CKRecord 的系统字段（含 recordChangeTag）归档存入对象。
+            // 使用 KVC setValue(_:forKey:) 写入：协议 extension 的默认 setter 是 no-op computed property，
+            // Swift 对 let 绑定的泛型类型拒绝通过协议 setter 赋值；KVC 直接操作 @Persisted 存储字段，绕过此限制。
+            // 先检查 schema 确保字段存在，兼容未添加 ckSystemFields 的旧模型。
+            if object.objectSchema.properties.contains(where: { $0.name == "ckSystemFields" }),
+               let systemFieldsData = try? NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true) {
+                object.setValue(systemFieldsData, forKey: "ckSystemFields")
             }
 
             realm.beginWrite()
