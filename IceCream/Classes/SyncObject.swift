@@ -131,6 +131,13 @@ extension SyncObject: Syncable {
 
             /// 如果您的模型类包含主键，您可以让Realm使用Realm()根据它们的主键值智能地更新或添加对象。添加(_:更新:)。
             /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
+
+            // 将 CKRecord 的系统字段（含 recordChangeTag）归档存入对象，
+            // 以便推送时还原出带 changeTag 的 CKRecord，支持 .ifServerRecordUnchanged 策略。
+            if let systemFieldsData = try? NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true) {
+                object.ckSystemFields = systemFieldsData
+            }
+
             realm.beginWrite()
             realm.add(object, update: .modified)
             do {

@@ -14,11 +14,22 @@ public protocol CKRecordConvertible {
     static var recordType: String { get }
     static var zoneID: CKRecordZone.ID { get }
     static var databaseScope: CKDatabase.Scope { get }
-    
+
     var recordID: CKRecord.ID { get }
     var record: CKRecord { get }
-
     var isDeleted: Bool { get }
+
+    /// 存储从 CloudKit 下发的 CKRecord 系统字段（包含 recordChangeTag）。
+    /// 拉取时由 SyncObject.add(record:) 写入；推送时由 record 属性读取以还原带 changeTag 的 CKRecord。
+    /// 默认实现返回 nil（忽略差量同步），在 Realm 模型中添加 @Persisted var ckSystemFields: Data? 可激活。
+    var ckSystemFields: Data? { get set }
+}
+
+extension CKRecordConvertible {
+    public var ckSystemFields: Data? {
+        get { nil }
+        set { }
+    }
 }
 
 extension CKRecordConvertible where Self: Object {
@@ -88,12 +99,23 @@ extension CKRecordConvertible where Self: Object {
     
     // 感谢这个家伙，用zoneID和recordID同时初始化CKRecord: https://stackoverflow.com/questions/45429133/how-to-initialize-ckrecord-with-both-zoneid-and-recordid
     public var record: CKRecord {
-        let r = CKRecord(recordType: Self.recordType, recordID: recordID)
+        // 优先从 ckSystemFields 还原——目的是携带服务端下发的 recordChangeTag，
+        // 以便配合 .ifServerRecordUnchanged 策略做精确冲突检测，而不是每次以 nil changeTag 覆盖。
+        let r: CKRecord
+        if let data = ckSystemFields,
+           let restored = try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKRecord.self, from: data),
+           restored.recordID == recordID {
+            r = restored
+        } else {
+            r = CKRecord(recordType: Self.recordType, recordID: recordID)
+        }
         let properties = objectSchema.properties
         for prop in properties {
-            
+            // ckSystemFields 是 Realm 本地字段，不上传到 CloudKit
+            if prop.name == "ckSystemFields" { continue }
+
             let item = self[prop.name]
-            
+
             if prop.isArray {
                 switch prop.type {
                 case .int:
@@ -163,16 +185,23 @@ extension CKRecordConvertible where Self: Object {
             
             switch prop.type {
             case .int, .string, .bool, .date, .float, .double, .data:
-                r[prop.name] = item as? CKRecordValue
+                // 还原了 ckSystemFields 时只写入真正变化的标量字段，减少 changedKeys 长度；
+                // 未还原时（新记录）照常写入所有字段。
+                let newValue = item as? CKRecordValue
+                if ckSystemFields != nil {
+                    if !ckRecordValuesEqual(r[prop.name], newValue) {
+                        r[prop.name] = newValue
+                    }
+                } else {
+                    r[prop.name] = newValue
+                }
             case .object:
                 guard let objectName = prop.objectClassName else { break }
                 if objectName == CreamLocation.className(), let creamLocation = item as? CreamLocation {
                     r[prop.name] = creamLocation.location
                 } else if objectName == CreamAsset.className() {
-                    // 只有文件在本地真实存在才写入 CKAsset。
-                    // 若 imageAsset 为 nil（文件下载失败）或文件尚未下载，跳过此 key。
-                    // .changedKeys 保存策略下，未设置的 key 不会覆盖 CloudKit 现有值，
-                    // 从而避免多设备场景中因本地文件缺失导致云端图片被清除。
+                    // 只有文件在本地真实存在才写入 CKAsset，避免文件未下载时清空云端图片。
+                    // CKAsset 不做内容比对（fileURL 归档后可能为 nil），直接写入由 CloudKit 判断是否重传。
                     if let creamAsset = item as? CreamAsset,
                        FileManager.default.fileExists(atPath: creamAsset.filePath.path) {
                         r[prop.name] = creamAsset.asset
@@ -199,5 +228,22 @@ extension CKRecordConvertible where Self: Object {
         }
         return r
     }
-    
+
+}
+
+/// 判断两个 CKRecordValue? 是否相等（仅用于标量类型的差量比对）
+private func ckRecordValuesEqual(_ lhs: CKRecordValue?, _ rhs: CKRecordValue?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil):                               return true
+    case (nil, _), (_, nil):                       return false
+    case (let l as String,    let r as String):    return l == r
+    case (let l as Int,       let r as Int):       return l == r
+    case (let l as Double,    let r as Double):    return l == r
+    case (let l as Float,     let r as Float):     return l == r
+    case (let l as Bool,      let r as Bool):      return l == r
+    case (let l as Date,      let r as Date):      return l == r
+    case (let l as Data,      let r as Data):      return l == r
+    case (let l as NSNumber,  let r as NSNumber):  return l == r
+    default:                                       return false
+    }
 }

@@ -123,11 +123,10 @@ extension DatabaseManager {
             modifyOpe.isLongLived = true
         }
 
-        // .changedKeys：只发送非 nil 字段，始终成功，无需 recordChangeTag，适合本架构。
-        // 注：Apple 推荐 .ifServerRecordUnchanged，但需在 Realm 模型中持久化 recordChangeTag 才能正确做冲突检测；
-        // 切换前须先将每次 fetch 返回的 CKRecord.recordChangeTag 写回对应 Realm 对象，否则所有已存在记录的更新
-        // 因 changeTag 为 nil 而批量触发 serverRecordChanged，导致每条记录多一次服务端往返。
-        modifyOpe.savePolicy = .changedKeys
+        // Apple 推荐策略：以 recordChangeTag 为锚点做精确冲突检测。
+        // 模型持久化 ckSystemFields 后，record 属性会还原出带 changeTag 的 CKRecord；
+        // 若 ckSystemFields 为 nil（首次推送新记录），changeTag 同为 nil，CloudKit 将其视为插入并成功。
+        modifyOpe.savePolicy = .ifServerRecordUnchanged
         // 后台同步无需占用 userInitiated 资源
         modifyOpe.qualityOfService = .utility
 
@@ -209,19 +208,19 @@ extension DatabaseManager {
 
 // MARK: - Conflict resolution helpers
 
-/// 单条记录冲突（CKError.serverRecordChanged）：将客户端已改动的字段合并到服务端记录后返回，供调用方重试
+/// 单条记录冲突（CKError.serverRecordChanged）：
+/// 将客户端主动修改的字段合并到 serverRecord；updateAt 取两者较大值。
 private func resolveServerRecordConflict(error: Error, clientRecords: [CKRecord]) -> [CKRecord] {
     guard let ckError = error as? CKError,
           ckError.code == .serverRecordChanged,
           let serverRecord = ckError.serverRecord,
           let clientRecord = ckError.clientRecord else { return [] }
-    // 将客户端变更的字段逐一写入服务端记录（服务端记录携带正确的 recordChangeTag）
-    clientRecord.changedKeys().forEach { serverRecord[$0] = clientRecord[$0] }
+    mergeIntoServer(serverRecord, from: clientRecord)
     return [serverRecord]
 }
 
 /// 批量操作中含冲突（CKError.partialFailure 内嵌多条 serverRecordChanged）：
-/// 对每条冲突记录执行字段合并，返回整批合并后的记录供调用方重试
+/// 对每条冲突记录执行字段合并，返回整批合并后的记录供调用方重试。
 private func resolvePartialConflicts(error: Error, clientRecords: [CKRecord]) -> [CKRecord] {
     guard let ckError = error as? CKError,
           ckError.code == .partialFailure,
@@ -238,9 +237,29 @@ private func resolvePartialConflicts(error: Error, clientRecords: [CKRecord]) ->
               let idx = merged.firstIndex(where: { $0.recordID == serverRecord.recordID })
         else { continue }
         hasConflict = true
-        clientRecord.changedKeys().forEach { serverRecord[$0] = clientRecord[$0] }
+        mergeIntoServer(serverRecord, from: clientRecord)
         merged[idx] = serverRecord
     }
-    // 无冲突条目时返回空，让调用方直接透传原始错误
     return hasConflict ? merged : []
+}
+
+/// 字段级合并策略（Apple 推荐 + updateAt 感知）：
+///  - 遍历 clientRecord.changedKeys()（本设备主动修改的字段）逐一写入 serverRecord。
+///  - updateAt 字段取两者较大值，确保合并后时间戳反映最新一次修改。
+///  - 背景：updateAt 是记录级时间戳而非字段级；此策略含义为"客户端主动改动字段始终保留"，
+///    同时用 max(updateAt) 保证时间戳语义正确。若需要"服务端更新较新时丢弃客户端变更"的语义，
+///    只需在调用处额外判断 updateAt 并决定是否调用本函数。
+private func mergeIntoServer(_ serverRecord: CKRecord, from clientRecord: CKRecord) {
+    let clientUpdateAt = clientRecord["updateAt"] as? Date ?? Date.distantPast
+    let serverUpdateAt = serverRecord["updateAt"] as? Date ?? Date.distantPast
+
+    for key in clientRecord.changedKeys() {
+        if key == "updateAt" {
+            // updateAt 始终取两者中较新的那个
+            serverRecord[key] = max(clientUpdateAt, serverUpdateAt) as CKRecordValue
+        } else {
+            // 其余字段：客户端主动改动的字段直接写入 serverRecord
+            serverRecord[key] = clientRecord[key]
+        }
+    }
 }
