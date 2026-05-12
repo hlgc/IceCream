@@ -14,14 +14,14 @@ import UIKit
 import CloudKit
 
 final class PrivateDatabaseManager: DatabaseManager {
-    
+
     let container: CKContainer
     let database: CKDatabase
-    
+
     let syncObjects: [Syncable]
-    
+
     var syncDateCallback: ((Date) -> Void)?
-    
+
     // 是否正在清理云端数据
     private var isDeleteiCloudData: Bool = false
 
@@ -35,17 +35,20 @@ final class PrivateDatabaseManager: DatabaseManager {
     /// 避免被取消的旧 operation 的回调干扰正在进行的新 fetch。
     private var _fetchGeneration = 0
 
+    var recordFetchedCallback: ((Int) -> Void)?
+    private var _fetchedRecordCount = 0
+
     var isFetching: Bool {
         stateLock.lock(); defer { stateLock.unlock() }
         return _isFetching
     }
-    
+
     public init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects
         self.container = container
         self.database = container.privateCloudDatabase
     }
-    
+
     /// 云端数据变化（入口：有并发保护，重复触发时排队等待当前 fetch 完成后再执行一次）
     func fetchChangesInDatabase(_ callback: ((Error?) -> Void)?) {
         stateLock.lock()
@@ -67,6 +70,7 @@ final class PrivateDatabaseManager: DatabaseManager {
         let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: databaseChangeToken)
         _currentFetchOperation = changesOperation
         stateLock.unlock()
+        _fetchedRecordCount = 0
 
         changesOperation.changeTokenUpdatedBlock = { [weak self] newToken in
             self?.databaseChangeToken = newToken
@@ -126,11 +130,11 @@ final class PrivateDatabaseManager: DatabaseManager {
             fetchChangesInDatabase(nil)
         }
     }
-    
+
     func createCustomZonesIfAllowed(_ callback: ((Error?) -> Void)?) {
         let zonesToCreate = syncObjects.filter { !$0.isCustomZoneCreated }.map { CKRecordZone(zoneID: $0.zoneID) }
         guard zonesToCreate.count > 0 else { return }
-        
+
         let modifyOp = CKModifyRecordZonesOperation(recordZonesToSave: zonesToCreate, recordZoneIDsToDelete: nil)
         modifyOp.modifyRecordZonesResultBlock = { [weak self] operationResult in
             guard let self = self else { return }
@@ -138,7 +142,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .success():
                 self.syncObjects.forEach { object in
                     object.isCustomZoneCreated = true
-                    
+
                     if self.isDeleteiCloudData {
                         return
                     }
@@ -167,20 +171,20 @@ final class PrivateDatabaseManager: DatabaseManager {
                 break
             }
         }
-        
+
         database.add(modifyOp)
     }
-    
+
     func createDatabaseSubscriptionIfHaveNot() {
         #if os(iOS) || os(tvOS) || os(macOS)
         guard !subscriptionIsLocallyCached else { return }
         let subscription = CKDatabaseSubscription(subscriptionID: IceCreamSubscription.cloudKitPrivateDatabaseSubscriptionID.id)
-        
+
         let notificationInfo = CKSubscription.NotificationInfo()
         notificationInfo.shouldSendContentAvailable = true // 无声推送
-        
+
         subscription.notificationInfo = notificationInfo
-        
+
         let createOp = CKModifySubscriptionsOperation(subscriptionsToSave: [subscription], subscriptionIDsToDelete: [])
         createOp.modifySubscriptionsResultBlock = { operationResult in
             switch operationResult {
@@ -194,21 +198,21 @@ final class PrivateDatabaseManager: DatabaseManager {
         database.add(createOp)
         #endif
     }
-    
+
     func startObservingTermination() {
         #if os(iOS) || os(tvOS)
-        
+
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: UIApplication.willTerminateNotification, object: nil)
-        
+
         #elseif os(macOS)
-        
+
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willResignActiveNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(self.cleanUp), name: NSApplication.willTerminateNotification, object: nil)
-        
+
         #endif
     }
-    
+
     func registerLocalDatabase() {
         self.syncObjects.forEach { object in
             DispatchQueue.main.async {
@@ -216,19 +220,19 @@ final class PrivateDatabaseManager: DatabaseManager {
             }
         }
     }
-    
+
     private func fetchChangesInZones(_ callback: ((Error?) -> Void)? = nil) {
         let changesOp = CKFetchRecordZoneChangesOperation()
         changesOp.recordZoneIDs = zoneIds
         changesOp.configurationsByRecordZoneID = zoneIdOptions
         changesOp.fetchAllChanges = true
-        
+
         changesOp.recordZoneChangeTokensUpdatedBlock = { [weak self] zoneId, token, _ in
             guard let self = self else { return }
             guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
             syncObject.zoneChangesToken = token
         }
-        
+
         changesOp.recordWasChangedBlock = { [weak self] recordID, recordResult in
             /// 云端会返回上次zoneChangesToken以来修改的记录，这里需要做本地缓存。
             /// 处理记录:
@@ -237,13 +241,15 @@ final class PrivateDatabaseManager: DatabaseManager {
             case .success(let record):
                 guard let syncObject = self.syncObjects.first(where: { $0.recordType == record.recordType }) else { return }
                 syncObject.add(record: record)
+                self._fetchedRecordCount += 1
+                self.recordFetchedCallback?(self._fetchedRecordCount)
                 /// 更新同步时间
                 syncDateCallback?(Date())
             default:
                 break
             }
         }
-        
+
         changesOp.recordWithIDWasDeletedBlock = { [weak self] recordId, _ in
             guard let self = self else { return }
             guard let syncObject = self.syncObjects.first(where: { $0.zoneID == recordId.zoneID }) else { return }
@@ -251,7 +257,7 @@ final class PrivateDatabaseManager: DatabaseManager {
             /// 更新同步时间
             syncDateCallback?(Date())
         }
-        
+
         changesOp.recordZoneFetchResultBlock = { [weak self] zoneId, result in
             guard let self = self else { return }
             switch result {
@@ -282,10 +288,10 @@ final class PrivateDatabaseManager: DatabaseManager {
                 }
             }
         }
-        
+
         changesOp.fetchRecordZoneChangesResultBlock = { [weak self] result in
             guard let self = self else { return }
-            
+
             switch result {
             case .success():
                 syncObjects.forEach {
@@ -298,7 +304,7 @@ final class PrivateDatabaseManager: DatabaseManager {
                 break
             }
         }
-        
+
         database.add(changesOp)
     }
 }
@@ -325,7 +331,7 @@ extension PrivateDatabaseManager {
                 UserDefaults.standard.removeObject(forKey: IceCreamKey.databaseChangesTokenKey.value)
                 return
             }
-            
+
             do {
                 let data = try NSKeyedArchiver.archivedData(withRootObject: n, requiringSecureCoding: true)
                 UserDefaults.standard.set(data, forKey: IceCreamKey.databaseChangesTokenKey.value)
@@ -334,7 +340,7 @@ extension PrivateDatabaseManager {
             }
         }
     }
-    
+
     var subscriptionIsLocallyCached: Bool {
         get {
             guard let flag = UserDefaults.standard.object(forKey: IceCreamKey.subscriptionIsLocallyCachedKey.value) as? Bool  else { return false }
@@ -344,11 +350,11 @@ extension PrivateDatabaseManager {
             UserDefaults.standard.set(newValue, forKey: IceCreamKey.subscriptionIsLocallyCachedKey.value)
         }
     }
-    
+
     private var zoneIds: [CKRecordZone.ID] {
         return syncObjects.map { $0.zoneID }
     }
-    
+
     private var zoneIdOptions: [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] {
         return syncObjects.reduce([CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration]()) { (dict, syncObject) -> [CKRecordZone.ID: CKFetchRecordZoneChangesOperation.ZoneConfiguration] in
             var dict = dict
@@ -358,13 +364,13 @@ extension PrivateDatabaseManager {
             return dict
         }
     }
-    
+
     @objc func cleanUp() {
         for syncObject in syncObjects {
             syncObject.cleanUp()
         }
     }
-    
+
     func resetAllTokens() {
         databaseChangeToken = nil
         syncObjects.forEach { $0.zoneChangesToken = nil }

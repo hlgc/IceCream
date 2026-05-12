@@ -21,12 +21,12 @@ public final class SyncEngine {
             UserDefaults.standard.set(newValue, forKey: #file+#function)
             UserDefaults.standard.synchronize()
         }
-        
+
         get {
             UserDefaults.standard.object(forKey: #file+#function) as? Date
         }
     }
-    
+
     /// 同步状态
     private var isSyncAvailable: Bool = true {
         didSet {
@@ -43,9 +43,13 @@ public final class SyncEngine {
     public var beforeFetchAction: ((@escaping () -> Void) -> Void)?
     /// 是否正在执行 fetchChangesInDatabase
     public var isFetching: Bool { databaseManager.isFetching }
+    /// 拉取记录时的进度回调，参数为已接收的记录数（下载时实时回调）
+    public var fetchProgressCallback: ((Int) -> Void)? {
+        didSet { databaseManager.recordFetchedCallback = fetchProgressCallback }
+    }
 
     private let databaseManager: DatabaseManager
-    
+
     public convenience init(objects: [Syncable], databaseScope: CKDatabase.Scope = .private, container: CKContainer = .default()) {
         switch databaseScope {
         case .private:
@@ -58,12 +62,12 @@ public final class SyncEngine {
             fatalError("Shared database scope is not supported yet")
         }
     }
-    
+
     private init(databaseManager: DatabaseManager) {
         self.databaseManager = databaseManager
         setup()
     }
-    
+
     private func setup() {
         databaseManager.syncDateCallback = { [weak self] date in
             guard let self = self else {
@@ -128,15 +132,15 @@ public final class SyncEngine {
             }
         }
     }
-    
+
 }
 
 // MARK: Public Method
 extension SyncEngine {
-    
+
     /// 获取CloudKit上的数据并与local合并
     ///
-    /// - 参数completionHandler:在”privateCloudDatabase”中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
+    /// - 参数completionHandler:在"privateCloudDatabase"中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
     public func pull(completionHandler: ((Error?) -> Void)? = nil) {
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
@@ -149,48 +153,52 @@ extension SyncEngine {
         databaseManager.resetAllTokens()
         databaseManager.fetchChangesInDatabase(completionHandler)
     }
-    
+
     /// 将所有现有的本地数据推送到CloudKit
     /// 您不应该过于频繁地调用此方法
-    public func pushAll(progress: @escaping (Double, String) -> Void,
+    public func pushAll(progress: @escaping (Int, Int, String) -> Void,
                         completion: @escaping (Result<Void, Error>) -> Void) {
-        let total = Double(databaseManager.syncObjects.count)
-        if total == 0 {
-            progress(1.0, "无数据需要推送")
+        let syncObjects = databaseManager.syncObjects
+        if syncObjects.isEmpty {
+            progress(0, 0, "无数据需要推送")
             completion(.success(()))
             return
         }
 
-        progress(0, "准备中")
-        func pushLocalObjectToCloudKit(_ index: Int) {
-            if index >= databaseManager.syncObjects.count {
-                progress(1.0, "推送完成")
+        // 先统计每类对象的本地记录数，用于真实进度
+        let countPerObject = syncObjects.map { $0.localRecordCount() }
+        let totalRecords = countPerObject.reduce(0, +)
+
+        progress(0, totalRecords, "准备中")
+
+        var completedRecords = 0
+
+        func pushNext(_ index: Int) {
+            if index >= syncObjects.count {
+                progress(totalRecords, totalRecords, "推送完成")
                 completion(.success(()))
                 return
             }
-            let syncObject = databaseManager.syncObjects[index]
-            
+            let syncObject = syncObjects[index]
             syncObject.pushLocalObjectsToCloudKit { error in
                 if let error = error {
                     completion(.failure(error))
                     return
                 }
-                
-                let index = Double(index) + 1.0
-                if index > total {
-                    progress(1.0, "推送完成")
-                    completion(.success(()))
-                    return
-                }
-                let p = index/total
-                progress(p, "推送中")
-                pushLocalObjectToCloudKit(Int(index))
+                completedRecords += countPerObject[index]
+                progress(completedRecords, totalRecords, "推送中")
+                pushNext(index + 1)
             }
         }
-        
-        pushLocalObjectToCloudKit(0)
+
+        pushNext(0)
     }
-    
+
+    /// 本地所有类型的非删除记录总数（用于展示数据量）
+    public func totalLocalRecordCount() -> Int {
+        return databaseManager.syncObjects.reduce(0) { $0 + $1.localRecordCount() }
+    }
+
     // 删除云端数据
     public func deleteAllCloudKitData(completion: @escaping (Result<Void, Error>) -> Void) {
         databaseManager.deleteAllCloudKitData { result in
@@ -214,11 +222,11 @@ public enum IceCreamKey: String {
     /// Tokens
     case databaseChangesTokenKey
     case zoneChangesTokenKey
-    
+
     /// Flags
     case subscriptionIsLocallyCachedKey
     case hasCustomZoneCreatedKey
-    
+
     var value: String {
         return "icecream.keys." + rawValue
     }
@@ -226,17 +234,17 @@ public enum IceCreamKey: String {
 
 /// 危险部分:
 /// 在大多数情况下，您不应该更改字符串值，因为它与用户设置有关。
-/// 例如:cloudKitSubscriptionID，如果不想使用“private_changes”而使用另一个字符串。你应该先删除旧的订阅。
+/// 例如:cloudKitSubscriptionID，如果不想使用"private_changes"而使用另一个字符串。你应该先删除旧的订阅。
 /// 否则您的用户将不会再次保存同一个订阅。所以你有麻烦了。
 /// 正确的方法是先删除旧订阅，然后保存新订阅。
 public enum IceCreamSubscription: String, CaseIterable {
     case cloudKitPrivateDatabaseSubscriptionID = "private_changes"
     case cloudKitPublicDatabaseSubscriptionID = "cloudKitPublicDatabaseSubcriptionID"
-    
+
     var id: String {
         return rawValue
     }
-    
+
     public static var allIDs: [String] {
         return IceCreamSubscription.allCases.map { $0.rawValue }
     }

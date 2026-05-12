@@ -16,17 +16,17 @@ import CloudKit
 /// 3.它移交给SyncEngine，以便可以与CloudKit对话。
 
 public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible & CKRecordRecoverable, U: Object, V: Object, W: Object {
-    
+
     /// 只要持有对返回的通知令牌的引用，就会传递通知。我们应该在注册更新的类中保留对该令牌的强引用，因为当通知令牌被释放时，通知会自动取消注册。
     /// 更多，参考在这里:https://realm.io/docs/swift/latest/#notifications
     private var notificationToken: NotificationToken?
-    
+
     public var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID], _ completion: ((Error?) -> ())?) -> ())?
     /// 后台自动同步发生错误时的回调（如空间不足）
     public var backgroundSyncErrorCallback: ((Error) -> Void)?
-    
+
     public let realmConfiguration: Realm.Configuration
-    
+
     private let pendingUTypeRelationshipsWorker = PendingRelationshipsWorker<U>()
     private let pendingVTypeRelationshipsWorker = PendingRelationshipsWorker<V>()
     private let pendingWTypeRelationshipsWorker = PendingRelationshipsWorker<W>()
@@ -34,7 +34,7 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
     /// key = 宿主对象主键，value = [(属性名, 被引用类型名, 被引用主键)]
     private var pendingDirectObjectRefs: [AnyHashable: [(propName: String, refType: String, refKey: AnyHashable)]] = [:]
     private let pendingDirectLock = NSLock()
-    
+
     public init(
         realmConfiguration: Realm.Configuration = .defaultConfiguration,
         type: T.Type,
@@ -44,21 +44,21 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
     ) {
         self.realmConfiguration = realmConfiguration
     }
-    
+
 }
 
 // MARK: - Zone information
 
 extension SyncObject: Syncable {
-    
+
     public var recordType: String {
         return T.recordType
     }
-    
+
     public var zoneID: CKRecordZone.ID {
         return T.zoneID
     }
-    
+
     public var zoneChangesToken: CKServerChangeToken? {
         get {
             /// 第一次启动时，令牌为零，服务器将把云上的所有内容都交给客户端
@@ -97,7 +97,7 @@ extension SyncObject: Syncable {
             UserDefaults.standard.set(newValue, forKey: T.className() + IceCreamKey.hasCustomZoneCreatedKey.value)
         }
     }
-    
+
     /// 云端同步添加
     public func add(record: CKRecord) {
         BackgroundWorker.shared.start {
@@ -128,7 +128,7 @@ extension SyncObject: Syncable {
             self.pendingUTypeRelationshipsWorker.realm = realm
             self.pendingVTypeRelationshipsWorker.realm = realm
             self.pendingWTypeRelationshipsWorker.realm = realm
-            
+
             /// 如果您的模型类包含主键，您可以让Realm使用Realm()根据它们的主键值智能地更新或添加对象。添加(_:更新:)。
             /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
             realm.beginWrite()
@@ -144,7 +144,7 @@ extension SyncObject: Syncable {
             }
         }
     }
-    
+
     /// 云端同步删除
     public func delete(recordID: CKRecord.ID) {
         BackgroundWorker.shared.start {
@@ -167,7 +167,7 @@ extension SyncObject: Syncable {
             }
         }
     }
-    
+
     /// 当您向一个realm提交写事务时，该realm的所有其他实例都将得到通知，并自动更新。
     /// 了解更多信息:https://realm.io/docs/swift/latest/#writes
     public func registerLocalDatabase() {
@@ -181,7 +181,7 @@ extension SyncObject: Syncable {
                 case .update(let collection, _, let insertions, let modifications):
                     let recordsToStore = (insertions + modifications).filter { $0 < collection.count }.map { collection[$0] }.filter{ !$0.isDeleted }.map { $0.record }
                     let recordIDsToDelete = modifications.filter { $0 < collection.count }.map { collection[$0] }.filter { $0.isDeleted }.map { $0.recordID }
-                    
+
                     guard recordsToStore.count > 0 || recordIDsToDelete.count > 0 else { return }
                     self.pipeToEngine?(recordsToStore, recordIDsToDelete, { [weak self] error in
                         if let error = error {
@@ -194,7 +194,7 @@ extension SyncObject: Syncable {
             })
         }
     }
-    
+
     public func resolvePendingRelationships() {
         pendingUTypeRelationshipsWorker.resolvePendingListElements()
         pendingVTypeRelationshipsWorker.resolvePendingListElements()
@@ -226,34 +226,38 @@ extension SyncObject: Syncable {
             }
         }
     }
-    
+
+    public func localRecordCount() -> Int {
+        let realm = try! Realm(configuration: realmConfiguration)
+        return realm.objects(T.self).filter { !$0.isDeleted }.count
+    }
+
     public func cleanUp() {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)
             let objects = realm.objects(T.self).filter { $0.isDeleted }
-            
+
             if objects.count <= 0 {
                 return
             }
-            
+
             var tokens: [NotificationToken] = []
             self.notificationToken.flatMap { tokens = [$0] }
-            
+
             realm.beginWrite()
             objects.forEach({ realm.delete($0) })
             do {
                 try realm.commitWrite(withoutNotifying: tokens)
             } catch {
-                
+
             }
         }
     }
-    
+
     public func pushLocalObjectsToCloudKit(_ callback: ((Error?) -> Void)? = nil) {
         let realm = try! Realm(configuration: self.realmConfiguration)
         let recordsToStore: [CKRecord] = realm.objects(T.self).filter { !$0.isDeleted }.map { $0.record }
         pipeToEngine?(recordsToStore, [], callback)
     }
-    
-}
 
+}
