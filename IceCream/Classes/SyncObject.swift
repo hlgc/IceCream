@@ -117,6 +117,34 @@ extension SyncObject: Syncable {
     public func add(record: CKRecord) {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)
+
+            // 冲突检测：本地存在且 updateAt 比云端 modificationDate 更新时，跳过覆盖（仅更新 ckSystemFields）
+            let hasUpdateAtField = T.sharedSchema()?.properties.contains(where: { $0.name == "updateAt" && $0.type == .date }) ?? false
+            if hasUpdateAtField, let primaryKey = T.primaryKeyForRecordID(recordID: record.recordID) {
+                if let existingObject = realm.object(ofType: T.self, forPrimaryKey: primaryKey) {
+                    let localUpdateAt = existingObject.value(forKey: "updateAt") as? Date
+                    let cloudModDate = record.modificationDate
+                    if let localDate = localUpdateAt, let cloudDate = cloudModDate, localDate > cloudDate {
+                        if existingObject.objectSchema.properties.contains(where: { $0.name == "ckSystemFields" }),
+                           let systemFieldsData = try? NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true) {
+                            realm.beginWrite()
+                            existingObject.setValue(systemFieldsData, forKey: "ckSystemFields")
+                            do {
+                                if let token = self.notificationToken {
+                                    try realm.commitWrite(withoutNotifying: [token])
+                                } else {
+                                    try realm.commitWrite()
+                                }
+                            } catch {
+                                print("IceCream: Realm write error in ckSystemFields update:", error)
+                            }
+                        }
+                        print("IceCream: skip overwrite for \(T.className()) pk=\(String(describing: primaryKey)), local(\(localDate)) > cloud(\(cloudDate))")
+                        return
+                    }
+                }
+            }
+
             var localPendingDirectRefs: [(propName: String, refType: String, refKey: AnyHashable)] = []
             guard let object = T.parseFromRecord(
                 record: record,
@@ -130,7 +158,6 @@ extension SyncObject: Syncable {
                 print("There is something wrong with the converson from cloud record to local object")
                 return
             }
-            // 记录无法立即解析的一对一引用（被引用对象尚未下载到 Realm）
             if !localPendingDirectRefs.isEmpty,
                let pkName = T.sharedSchema()?.primaryKeyProperty?.name,
                let ownerKey = object.value(forKey: pkName) as? AnyHashable {
@@ -144,13 +171,6 @@ extension SyncObject: Syncable {
             self.pendingVTypeRelationshipsWorker.realm = realm
             self.pendingWTypeRelationshipsWorker.realm = realm
 
-            /// 如果您的模型类包含主键，您可以让Realm使用Realm()根据它们的主键值智能地更新或添加对象。添加(_:更新:)。
-            /// https://realm.io/docs/swift/latest/#objects-with-primary-keys
-
-            // 将 CKRecord 的系统字段（含 recordChangeTag）归档存入对象。
-            // 使用 KVC setValue(_:forKey:) 写入：协议 extension 的默认 setter 是 no-op computed property，
-            // Swift 对 let 绑定的泛型类型拒绝通过协议 setter 赋值；KVC 直接操作 @Persisted 存储字段，绕过此限制。
-            // 先检查 schema 确保字段存在，兼容未添加 ckSystemFields 的旧模型。
             if object.objectSchema.properties.contains(where: { $0.name == "ckSystemFields" }),
                let systemFieldsData = try? NSKeyedArchiver.archivedData(withRootObject: record, requiringSecureCoding: true) {
                 object.setValue(systemFieldsData, forKey: "ckSystemFields")

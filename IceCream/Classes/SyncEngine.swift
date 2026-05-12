@@ -87,6 +87,8 @@ public final class SyncEngine {
     }
 
     deinit {
+        NotificationCenter.default.removeObserver(self)
+        databaseManager.cleanUp()
         databaseManager.cancelFetch()
     }
 
@@ -221,6 +223,11 @@ extension SyncEngine {
     /// - 参数completionHandler:在"privateCloudDatabase"中受支持。当提取数据过程完成时，将调用completionHandler。当发生任何错误时，将返回错误。否则，误差将为零。
     public func pull(completionHandler: ((Error?) -> Void)? = nil) {
         databaseManager.fetchChangesInDatabase(completionHandler)
+    }
+
+    /// 重置所有变更令牌（下次 fetch 将全量拉取）
+    public func resetAllTokens() {
+        databaseManager.resetAllTokens()
     }
 
     /// 重置所有变更令牌后全量拉取 CloudKit 数据，适用于：
