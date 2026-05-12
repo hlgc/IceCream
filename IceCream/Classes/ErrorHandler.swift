@@ -123,7 +123,7 @@ struct ErrorHandler {
     func retryOperationIfPossible(retryAfter: Double, block: @escaping () -> ()) {
         
         let delayTime = DispatchTime.now() + retryAfter
-        DispatchQueue.main.asyncAfter(deadline: delayTime, execute: {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: delayTime, execute: {
             block()
         })
         

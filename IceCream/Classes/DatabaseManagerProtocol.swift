@@ -123,13 +123,15 @@ extension DatabaseManager {
             modifyOpe.isLongLived = true
         }
 
-        // 我们使用。已更改密钥保存策略在此进行未锁定的更改，因为我的应用程序是有争议的，首先离线
-        // 苹果建议使用。ifServerRecordUnchanged保存策略
-        // 如需详细资讯，请参阅进阶云端套件(https://developer.apple.com/videos/play/wwdc2014/231/)
+        // .changedKeys：只发送非 nil 字段，始终成功，无需 recordChangeTag，适合本架构。
+        // 注：Apple 推荐 .ifServerRecordUnchanged，但需在 Realm 模型中持久化 recordChangeTag 才能正确做冲突检测；
+        // 切换前须先将每次 fetch 返回的 CKRecord.recordChangeTag 写回对应 Realm 对象，否则所有已存在记录的更新
+        // 因 changeTag 为 nil 而批量触发 serverRecordChanged，导致每条记录多一次服务端往返。
         modifyOpe.savePolicy = .changedKeys
+        // 后台同步无需占用 userInitiated 资源
+        modifyOpe.qualityOfService = .utility
 
-        // 为了避免CKError.partialFailure，请使操作原子化(如果一条记录未能被修改，则所有记录都将失败)
-        // 如果要处理部分失败，请设置。isAtomic为false并实现CKOperationResultType。失败(原因:。部分故障)
+        // 原子操作：一条失败则全批失败，确保数据库一致性
         modifyOpe.isAtomic = true
 
         modifyOpe.modifyRecordsResultBlock = {
@@ -179,6 +181,21 @@ extension DatabaseManager {
                     group.notify(queue: .main) {
                         completion?(firstError)
                     }
+                case .recoverableError(let reason, _):
+                    switch reason {
+                    case .serverRecordChanged:
+                        // 单条冲突：客户端字段合并到服务端记录后重试
+                        let merged = resolveServerRecordConflict(error: error, clientRecords: recordsToStore)
+                        guard !merged.isEmpty else { completion?(error); return }
+                        self.syncRecordsToCloudKit(recordsToStore: merged, recordIDsToDelete: recordIDsToDelete, completion: completion)
+                    case .partialFailure:
+                        // 批量中含冲突：提取各条冲突合并后重试整批
+                        let merged = resolvePartialConflicts(error: error, clientRecords: recordsToStore)
+                        guard !merged.isEmpty else { completion?(error); return }
+                        self.syncRecordsToCloudKit(recordsToStore: merged, recordIDsToDelete: recordIDsToDelete, completion: completion)
+                    default:
+                        completion?(error)
+                    }
                 default:
                     completion?(error)
                     return
@@ -188,7 +205,42 @@ extension DatabaseManager {
         database.add(modifyOpe)
     }
 
-    private func modifyRecordsResult() {
+}
 
+// MARK: - Conflict resolution helpers
+
+/// 单条记录冲突（CKError.serverRecordChanged）：将客户端已改动的字段合并到服务端记录后返回，供调用方重试
+private func resolveServerRecordConflict(error: Error, clientRecords: [CKRecord]) -> [CKRecord] {
+    guard let ckError = error as? CKError,
+          ckError.code == .serverRecordChanged,
+          let serverRecord = ckError.serverRecord,
+          let clientRecord = ckError.clientRecord else { return [] }
+    // 将客户端变更的字段逐一写入服务端记录（服务端记录携带正确的 recordChangeTag）
+    clientRecord.changedKeys().forEach { serverRecord[$0] = clientRecord[$0] }
+    return [serverRecord]
+}
+
+/// 批量操作中含冲突（CKError.partialFailure 内嵌多条 serverRecordChanged）：
+/// 对每条冲突记录执行字段合并，返回整批合并后的记录供调用方重试
+private func resolvePartialConflicts(error: Error, clientRecords: [CKRecord]) -> [CKRecord] {
+    guard let ckError = error as? CKError,
+          ckError.code == .partialFailure,
+          let partialErrors = ckError.partialErrorsByItemID else { return [] }
+
+    var merged = clientRecords
+    var hasConflict = false
+
+    for (_, itemError) in partialErrors {
+        guard let itemCKError = itemError as? CKError,
+              itemCKError.code == .serverRecordChanged,
+              let serverRecord = itemCKError.serverRecord,
+              let clientRecord = itemCKError.clientRecord,
+              let idx = merged.firstIndex(where: { $0.recordID == serverRecord.recordID })
+        else { continue }
+        hasConflict = true
+        clientRecord.changedKeys().forEach { serverRecord[$0] = clientRecord[$0] }
+        merged[idx] = serverRecord
     }
+    // 无冲突条目时返回空，让调用方直接透传原始错误
+    return hasConflict ? merged : []
 }

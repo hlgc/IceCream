@@ -19,7 +19,6 @@ public final class SyncEngine {
     public var syncDate: Date? {
         set {
             UserDefaults.standard.set(newValue, forKey: #file+#function)
-            UserDefaults.standard.synchronize()
         }
 
         get {
@@ -49,6 +48,9 @@ public final class SyncEngine {
     }
 
     private let databaseManager: DatabaseManager
+
+    private var isPushInProgress = false
+    private let pushLock = NSLock()
 
     public convenience init(objects: [Syncable], databaseScope: CKDatabase.Scope = .private, container: CKContainer = .default()) {
         switch databaseScope {
@@ -155,17 +157,26 @@ extension SyncEngine {
     }
 
     /// 将所有现有的本地数据推送到CloudKit
-    /// 您不应该过于频繁地调用此方法
+    /// 内部有并发保护：若上一次推送尚未完成，立即以 IceCreamError.pushAlreadyInProgress 回调，不会重复提交
     public func pushAll(progress: @escaping (Int, Int, String) -> Void,
                         completion: @escaping (Result<Void, Error>) -> Void) {
+        pushLock.lock()
+        guard !isPushInProgress else {
+            pushLock.unlock()
+            completion(.failure(IceCreamError.pushAlreadyInProgress))
+            return
+        }
+        isPushInProgress = true
+        pushLock.unlock()
+
         let syncObjects = databaseManager.syncObjects
         if syncObjects.isEmpty {
             progress(0, 0, "无数据需要推送")
+            pushLock.lock(); isPushInProgress = false; pushLock.unlock()
             completion(.success(()))
             return
         }
 
-        // 先统计每类对象的本地记录数，用于真实进度
         let countPerObject = syncObjects.map { $0.localRecordCount() }
         let totalRecords = countPerObject.reduce(0, +)
 
@@ -176,12 +187,14 @@ extension SyncEngine {
         func pushNext(_ index: Int) {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
+                pushLock.lock(); isPushInProgress = false; pushLock.unlock()
                 completion(.success(()))
                 return
             }
             let syncObject = syncObjects[index]
             syncObject.pushLocalObjectsToCloudKit { error in
                 if let error = error {
+                    pushLock.lock(); isPushInProgress = false; pushLock.unlock()
                     completion(.failure(error))
                     return
                 }
@@ -195,15 +208,26 @@ extension SyncEngine {
     }
 
     /// 只推送 date 之后新增或修改的本地记录（用于重新开启同步后的离线数据上传）
+    /// 与 pushAll 共用并发锁：两者不可同时运行，后调用的立即以 IceCreamError.pushAlreadyInProgress 回调
     public func pushOffline(since date: Date,
                             progress: @escaping (Int, Int, String) -> Void,
                             completion: @escaping (Result<Void, Error>) -> Void) {
+        pushLock.lock()
+        guard !isPushInProgress else {
+            pushLock.unlock()
+            completion(.failure(IceCreamError.pushAlreadyInProgress))
+            return
+        }
+        isPushInProgress = true
+        pushLock.unlock()
+
         let syncObjects = databaseManager.syncObjects
         let countPerObject = syncObjects.map { $0.offlineRecordCount(since: date) }
         let totalRecords = countPerObject.reduce(0, +)
 
         if totalRecords == 0 {
             progress(0, 0, "无离线数据")
+            pushLock.lock(); isPushInProgress = false; pushLock.unlock()
             completion(.success(()))
             return
         }
@@ -214,11 +238,16 @@ extension SyncEngine {
         func pushNext(_ index: Int) {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
+                pushLock.lock(); isPushInProgress = false; pushLock.unlock()
                 completion(.success(()))
                 return
             }
             syncObjects[index].pushOfflineObjectsToCloudKit(since: date) { error in
-                if let error = error { completion(.failure(error)); return }
+                if let error = error {
+                    pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                    completion(.failure(error))
+                    return
+                }
                 completedRecords += countPerObject[index]
                 progress(completedRecords, totalRecords, "推送中")
                 pushNext(index + 1)
@@ -263,6 +292,19 @@ public enum IceCreamKey: String {
 
     var value: String {
         return "icecream.keys." + rawValue
+    }
+}
+
+/// push 操作级错误
+public enum IceCreamError: Error, LocalizedError {
+    /// pushAll / pushOffline 已在进行中，重复调用被拒绝
+    case pushAlreadyInProgress
+
+    public var errorDescription: String? {
+        switch self {
+        case .pushAlreadyInProgress:
+            return "A push operation is already in progress. Wait for it to complete before calling pushAll or pushOffline again."
+        }
     }
 }
 
