@@ -232,6 +232,22 @@ extension SyncObject: Syncable {
         return realm.objects(T.self).filter { !$0.isDeleted }.count
     }
 
+    public func offlineRecordCount(since date: Date) -> Int {
+        let realm = try! Realm(configuration: realmConfiguration)
+        return realm.objects(T.self)
+            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
+            .count
+    }
+
+    public func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)? = nil) {
+        let realm = try! Realm(configuration: realmConfiguration)
+        let recordsToStore: [CKRecord] = realm.objects(T.self)
+            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
+            .map { $0.record }
+        guard !recordsToStore.isEmpty else { callback?(nil); return }
+        pipeToEngine?(recordsToStore, [], callback)
+    }
+
     public func cleanUp() {
         BackgroundWorker.shared.start {
             let realm = try! Realm(configuration: self.realmConfiguration)

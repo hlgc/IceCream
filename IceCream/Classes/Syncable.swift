@@ -32,8 +32,14 @@ public protocol Syncable: AnyObject {
     /// CloudKit相关-推送本地数据到iCloud
     func pushLocalObjectsToCloudKit(_ callback: ((Error?) -> Void)?)
 
+    /// 只推送 date 之后新增或修改的本地记录（离线期间的变更）
+    func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)?)
+
     /// 返回本地非删除记录数，用于计算真实推送进度
     func localRecordCount() -> Int
+
+    /// 返回 date 之后新增或修改的本地非删除记录数
+    func offlineRecordCount(since date: Date) -> Int
 
     /// Callback
     var pipeToEngine: ((_ recordsToStore: [CKRecord], _ recordIDsToDelete: [CKRecord.ID], _ completion: ((Error?) -> ())? ) -> ())? { get set }
@@ -44,4 +50,8 @@ public protocol Syncable: AnyObject {
 
 extension Syncable {
     public func localRecordCount() -> Int { return 0 }
+    public func offlineRecordCount(since date: Date) -> Int { return 0 }
+    public func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)?) {
+        pushLocalObjectsToCloudKit(callback)
+    }
 }

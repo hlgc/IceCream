@@ -194,6 +194,40 @@ extension SyncEngine {
         pushNext(0)
     }
 
+    /// 只推送 date 之后新增或修改的本地记录（用于重新开启同步后的离线数据上传）
+    public func pushOffline(since date: Date,
+                            progress: @escaping (Int, Int, String) -> Void,
+                            completion: @escaping (Result<Void, Error>) -> Void) {
+        let syncObjects = databaseManager.syncObjects
+        let countPerObject = syncObjects.map { $0.offlineRecordCount(since: date) }
+        let totalRecords = countPerObject.reduce(0, +)
+
+        if totalRecords == 0 {
+            progress(0, 0, "无离线数据")
+            completion(.success(()))
+            return
+        }
+
+        progress(0, totalRecords, "准备中")
+        var completedRecords = 0
+
+        func pushNext(_ index: Int) {
+            if index >= syncObjects.count {
+                progress(totalRecords, totalRecords, "推送完成")
+                completion(.success(()))
+                return
+            }
+            syncObjects[index].pushOfflineObjectsToCloudKit(since: date) { error in
+                if let error = error { completion(.failure(error)); return }
+                completedRecords += countPerObject[index]
+                progress(completedRecords, totalRecords, "推送中")
+                pushNext(index + 1)
+            }
+        }
+
+        pushNext(0)
+    }
+
     /// 本地所有类型的非删除记录总数（用于展示数据量）
     public func totalLocalRecordCount() -> Int {
         return databaseManager.syncObjects.reduce(0) { $0 + $1.localRecordCount() }
