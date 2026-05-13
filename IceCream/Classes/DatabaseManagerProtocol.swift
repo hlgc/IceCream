@@ -80,34 +80,10 @@ extension DatabaseManager {
     }
 
     func resumeLongLivedOperationIfPossible() {
-        container.fetchAllLongLivedOperationIDs { [weak self] opeIDs, error in
-            guard let self = self, error == nil, let ids = opeIDs else { return }
-            for id in ids {
-                self.container.fetchLongLivedOperation(withID: id, completionHandler: { [weak self] ope, error in
-                    guard let self = self, error == nil else { return }
-                    if let modifyOp = ope as? CKModifyRecordsOperation {
-                        modifyOp.modifyRecordsResultBlock = { [weak self] result in
-                            switch result {
-                            case .success:
-                                print("IceCream: resumed long-lived modify operation succeeded")
-                                self?.syncDateCallback?(Date())
-                            case .failure(let opError):
-                                print("IceCream: resumed long-lived modify operation failed: \(opError.localizedDescription)")
-                                switch ErrorHandler.shared.resultType(with: opError) {
-                                case .retry(let timeToWait, _):
-                                    ErrorHandler.shared.retryOperationIfPossible(retryAfter: timeToWait) {
-                                        self?.resumeLongLivedOperationIfPossible()
-                                    }
-                                default:
-                                    break
-                                }
-                            }
-                        }
-                        database.add(modifyOp)
-                    }
-                })
-            }
-        }
+        // Apple's fetchLongLivedOperation is notoriously flaky and can cause crashes 
+        // when adding the fetched operation back to the database queue.
+        // Since we already use `pushOffline` to sync any unsynced local changes,
+        // we can safely skip resuming long-lived operations to prevent these crashes.
     }
 
     func startObservingRemoteChanges() {
