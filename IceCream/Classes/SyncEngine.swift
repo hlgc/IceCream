@@ -15,6 +15,29 @@ import CloudKit
 
 public final class SyncEngine {
 
+    // MARK: - Global Notification Tokens
+    // 收集当前 App 中所有的 IceCream 通知 token，以便跨实体解析时一并忽略，避免引发循环推送
+    public static var customNotificationTokens: [NotificationToken] = []
+    public static let customNotificationTokensLock = NSLock()
+    
+    public static func addNotificationToken(_ token: NotificationToken) {
+        customNotificationTokensLock.lock()
+        customNotificationTokens.append(token)
+        customNotificationTokensLock.unlock()
+    }
+    
+    public static func removeNotificationToken(_ token: NotificationToken) {
+        customNotificationTokensLock.lock()
+        customNotificationTokens.removeAll { $0 == token }
+        customNotificationTokensLock.unlock()
+    }
+    
+    public static func getNotificationTokens() -> [NotificationToken] {
+        customNotificationTokensLock.lock()
+        defer { customNotificationTokensLock.unlock() }
+        return customNotificationTokens
+    }
+
     // MARK: - Sync Date
 
     private static let syncDateKey = "icecream.sync.lastSyncDate"

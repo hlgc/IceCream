@@ -38,7 +38,7 @@ final class PendingRelationshipsWorker<Element: Object> {
         directRefs[elementPrimaryKeyValue] = (propName: propertyName, ownerPrimaryKey: pk)
     }
 
-    func resolvePendingListElements() {
+    func resolvePendingListElements(notificationToken: NotificationToken?) {
         guard let realm = realm, let typeName = ownerTypeName else { return }
 
         let entries = listEntries
@@ -59,11 +59,26 @@ final class PendingRelationshipsWorker<Element: Object> {
                 }
                 guard !orderedItems.isEmpty else { continue }
                 do {
-                    try realm.write {
+                    let tokens = SyncEngine.getNotificationTokens()
+                    if !tokens.isEmpty || notificationToken != nil {
+                        realm.beginWrite()
                         let list = owner.dynamicList(entry.propName)
                         list.removeAll()
                         for item in orderedItems {
                             list.append(item)
+                        }
+                        if !tokens.isEmpty {
+                            try realm.commitWrite(withoutNotifying: tokens)
+                        } else {
+                            try realm.commitWrite(withoutNotifying: [notificationToken!])
+                        }
+                    } else {
+                        try realm.write {
+                            let list = owner.dynamicList(entry.propName)
+                            list.removeAll()
+                            for item in orderedItems {
+                                list.append(item)
+                            }
                         }
                     }
                 } catch {
@@ -79,8 +94,19 @@ final class PendingRelationshipsWorker<Element: Object> {
                     continue
                 }
                 do {
-                    try realm.write {
+                    let tokens = SyncEngine.getNotificationTokens()
+                    if !tokens.isEmpty || notificationToken != nil {
+                        realm.beginWrite()
                         owner.setValue(element, forKey: ref.propName)
+                        if !tokens.isEmpty {
+                            try realm.commitWrite(withoutNotifying: tokens)
+                        } else {
+                            try realm.commitWrite(withoutNotifying: [notificationToken!])
+                        }
+                    } else {
+                        try realm.write {
+                            owner.setValue(element, forKey: ref.propName)
+                        }
                     }
                 } catch {
                     print("IceCream: direct ref resolution error:", error)

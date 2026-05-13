@@ -53,9 +53,10 @@ public final class SyncObject<T, U, V, W> where T: Object & CKRecordConvertible 
         // deinit 可能被调用于任意线程（如 CloudKit 回调队列），所以显式派发到 BackgroundWorker。
         let token = notificationToken
         notificationToken = nil
-        if token != nil {
+        if let t = token {
+            SyncEngine.removeNotificationToken(t)
             BackgroundWorker.shared.start {
-                token?.invalidate()
+                t.invalidate()
             }
         }
     }
@@ -179,7 +180,10 @@ extension SyncObject: Syncable {
             realm.beginWrite()
             realm.add(object, update: .modified)
             do {
-                if let token = self.notificationToken {
+                let tokens = SyncEngine.getNotificationTokens()
+                if !tokens.isEmpty {
+                    try realm.commitWrite(withoutNotifying: tokens)
+                } else if let token = self.notificationToken {
                     try realm.commitWrite(withoutNotifying: [token])
                 } else {
                     try realm.commitWrite()
@@ -202,7 +206,10 @@ extension SyncObject: Syncable {
             realm.beginWrite()
             realm.delete(object)
             do {
-                if let token = self.notificationToken {
+                let tokens = SyncEngine.getNotificationTokens()
+                if !tokens.isEmpty {
+                    try realm.commitWrite(withoutNotifying: tokens)
+                } else if let token = self.notificationToken {
                     try realm.commitWrite(withoutNotifying: [token])
                 } else {
                     try realm.commitWrite()
@@ -237,13 +244,16 @@ extension SyncObject: Syncable {
                     break
                 }
             })
+            if let token = self.notificationToken {
+                SyncEngine.addNotificationToken(token)
+            }
         }
     }
 
     public func resolvePendingRelationships() {
-        pendingUTypeRelationshipsWorker.resolvePendingListElements()
-        pendingVTypeRelationshipsWorker.resolvePendingListElements()
-        pendingWTypeRelationshipsWorker.resolvePendingListElements()
+        pendingUTypeRelationshipsWorker.resolvePendingListElements(notificationToken: notificationToken)
+        pendingVTypeRelationshipsWorker.resolvePendingListElements(notificationToken: notificationToken)
+        pendingWTypeRelationshipsWorker.resolvePendingListElements(notificationToken: notificationToken)
         resolveDirectObjectReferences()
     }
 
@@ -255,6 +265,7 @@ extension SyncObject: Syncable {
 
         guard !pending.isEmpty else { return }
 
+        let token = notificationToken
         BackgroundWorker.shared.start { [self] in
             let realm = try! Realm(configuration: realmConfiguration)
             for (ownerKey, refs) in pending {
@@ -263,7 +274,18 @@ extension SyncObject: Syncable {
                 for ref in refs {
                     guard let refObj = realm.dynamicObject(ofType: ref.refType, forPrimaryKey: ref.refKey) else { continue }
                     do {
-                        try realm.write { owner.setValue(refObj, forKey: ref.propName) }
+                        let tokens = SyncEngine.getNotificationTokens()
+                        if !tokens.isEmpty || token != nil {
+                            realm.beginWrite()
+                            owner.setValue(refObj, forKey: ref.propName)
+                            if !tokens.isEmpty {
+                                try realm.commitWrite(withoutNotifying: tokens)
+                            } else {
+                                try realm.commitWrite(withoutNotifying: [token!])
+                            }
+                        } else {
+                            try realm.write { owner.setValue(refObj, forKey: ref.propName) }
+                        }
                     } catch {
                         print("IceCream: Failed to resolve pending direct reference:", error)
                     }
