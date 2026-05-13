@@ -196,6 +196,7 @@ public class CreamAsset: Object {
             do {
                 try FileManager.default.copyItem(at: url, to: destPath)
             } catch {
+                print("IceCream: Failed to copy CKAsset from \(url) to \(destPath). Error: \(error)")
                 return nil
             }
         }
