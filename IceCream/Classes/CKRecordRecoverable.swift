@@ -26,6 +26,9 @@ extension CKRecordRecoverable where Self: Object {
         
         var existingObj: Self? = nil
         if let pkValue = primaryKeyForRecordID(recordID: record.recordID, schema: o.objectSchema) {
+            if let pkName = o.objectSchema.primaryKeyProperty?.name {
+                o.setValue(pkValue, forKey: pkName)
+            }
             existingObj = realm.object(ofType: Self.self, forPrimaryKey: pkValue)
         }
         

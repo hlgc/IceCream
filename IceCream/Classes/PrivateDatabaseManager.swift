@@ -417,6 +417,7 @@ extension PrivateDatabaseManager {
                 self.syncObjects.forEach {
                     $0.isCustomZoneCreated = false
                 }
+                self.resetAllTokens() // 清理远端数据后重置所有的Token
                 self.createCustomZonesIfAllowed { error in
                     if let error = error {
                         completion(.failure(error))
