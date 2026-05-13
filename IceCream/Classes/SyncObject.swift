@@ -280,17 +280,17 @@ extension SyncObject: Syncable {
     public func offlineRecordCount(since date: Date) -> Int {
         let realm = try! Realm(configuration: realmConfiguration)
         return realm.objects(T.self)
-            .filter("createdAt > %@ OR updateAt > %@", date as NSDate, date as NSDate)
+            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
             .count
     }
 
     public func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)? = nil) {
         let realm = try! Realm(configuration: realmConfiguration)
-        let offlineObjects = realm.objects(T.self).filter("createdAt > %@ OR updateAt > %@", date as NSDate, date as NSDate)
-        let recordsToStore: [CKRecord] = offlineObjects.filter { !$0.isDeleted }.map { $0.record }
-        let recordIDsToDelete: [CKRecord.ID] = offlineObjects.filter { $0.isDeleted }.map { $0.recordID }
-        guard !recordsToStore.isEmpty || !recordIDsToDelete.isEmpty else { callback?(nil); return }
-        pipeToEngine?(recordsToStore, recordIDsToDelete, callback)
+        let recordsToStore: [CKRecord] = realm.objects(T.self)
+            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
+            .map { $0.record }
+        guard !recordsToStore.isEmpty else { callback?(nil); return }
+        pipeToEngine?(recordsToStore, [], callback)
     }
 
     public func cleanUp() {
@@ -317,7 +317,14 @@ extension SyncObject: Syncable {
 
     public func pushLocalObjectsToCloudKit(_ callback: ((Error?) -> Void)? = nil) {
         let realm = try! Realm(configuration: self.realmConfiguration)
-        let recordsToStore: [CKRecord] = realm.objects(T.self).filter { !$0.isDeleted }.map { $0.record }
+        let recordsToStore: [CKRecord] = realm.objects(T.self).filter { !$0.isDeleted }.map { $0.record }.filter { record in
+            guard record.recordChangeTag != nil else { return true }
+            return !record.changedKeys().isEmpty
+        }
+        guard !recordsToStore.isEmpty else {
+            callback?(nil)
+            return
+        }
         pipeToEngine?(recordsToStore, [], callback)
     }
 
