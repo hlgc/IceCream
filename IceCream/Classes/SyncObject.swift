@@ -280,17 +280,17 @@ extension SyncObject: Syncable {
     public func offlineRecordCount(since date: Date) -> Int {
         let realm = try! Realm(configuration: realmConfiguration)
         return realm.objects(T.self)
-            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
+            .filter("createdAt > %@ OR updateAt > %@", date as NSDate, date as NSDate)
             .count
     }
 
     public func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)? = nil) {
         let realm = try! Realm(configuration: realmConfiguration)
-        let recordsToStore: [CKRecord] = realm.objects(T.self)
-            .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
-            .map { $0.record }
-        guard !recordsToStore.isEmpty else { callback?(nil); return }
-        pipeToEngine?(recordsToStore, [], callback)
+        let offlineObjects = realm.objects(T.self).filter("createdAt > %@ OR updateAt > %@", date as NSDate, date as NSDate)
+        let recordsToStore: [CKRecord] = offlineObjects.filter { !$0.isDeleted }.map { $0.record }
+        let recordIDsToDelete: [CKRecord.ID] = offlineObjects.filter { $0.isDeleted }.map { $0.recordID }
+        guard !recordsToStore.isEmpty || !recordIDsToDelete.isEmpty else { callback?(nil); return }
+        pipeToEngine?(recordsToStore, recordIDsToDelete, callback)
     }
 
     public func cleanUp() {
