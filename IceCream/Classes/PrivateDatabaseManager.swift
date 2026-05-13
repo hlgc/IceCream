@@ -251,12 +251,20 @@ final class PrivateDatabaseManager: DatabaseManager {
             syncObject.delete(recordID: recordId)
         }
 
+        var hasMoreComing = false
+        let moreComingLock = NSLock()
+
         changesOp.recordZoneFetchResultBlock = { [weak self] zoneId, result in
             guard let self = self else { return }
             switch result {
-            case .success((let token, _, _)):
+            case .success((let token, _, let moreComing)):
                 guard let syncObject = self.syncObjects.first(where: { $0.zoneID == zoneId }) else { return }
                 syncObject.zoneChangesToken = token
+                if moreComing {
+                    moreComingLock.lock()
+                    hasMoreComing = true
+                    moreComingLock.unlock()
+                }
             case .failure(let error):
                 switch ErrorHandler.shared.resultType(with: error) {
                 case .success:
@@ -296,14 +304,16 @@ final class PrivateDatabaseManager: DatabaseManager {
 
             switch result {
             case .success():
-                syncObjects.forEach {
+                self.syncObjects.forEach {
                     $0.resolvePendingRelationships()
                 }
-                callback?(nil)
-                break
+                if hasMoreComing {
+                    self.fetchChangesInZones(callback)
+                } else {
+                    callback?(nil)
+                }
             case .failure(let error):
                 callback?(error)
-                break
             }
         }
 
