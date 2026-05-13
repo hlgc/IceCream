@@ -6,6 +6,7 @@
 //
 
 import CloudKit
+import RealmSwift
 
 /// SyncEngine直接和CloudKit对话。
 /// 逻辑上，
