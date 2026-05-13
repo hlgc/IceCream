@@ -33,7 +33,7 @@ final class BackgroundWorker: NSObject {
         
         if let thread = thread {
             let wrapper = BlockWrapper(block)
-            perform(#selector(BlockWrapper.run),
+            wrapper.perform(#selector(BlockWrapper.run),
                     on: thread,
                     with: nil,
                     waitUntilDone: true,
@@ -60,11 +60,14 @@ final class BackgroundWorker: NSObject {
             return
         }
         let t = Thread { [weak self] in
-            guard let self = self else { return }
+            // guard let self = self else { return } // Removed to fix unused warning and unnecessary capture
+            guard self != nil else { return }
             let rl = RunLoop.current
             rl.add(Port(), forMode: .default)
             while !Thread.current.isCancelled {
-                rl.run(mode: .default, before: Date.distantFuture)
+                autoreleasepool {
+                    rl.run(mode: .default, before: Date.distantFuture)
+                }
             }
             Thread.exit()
         }
