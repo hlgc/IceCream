@@ -18,6 +18,8 @@ public protocol CKRecordConvertible {
     var recordID: CKRecord.ID { get }
     var record: CKRecord { get }
     var isDeleted: Bool { get }
+    var createdAt: Date { get set }
+    var updateAt: Date { get set }
 
     /// 存储从 CloudKit 下发的 CKRecord 系统字段（包含 recordChangeTag）。
     /// 拉取时由 SyncObject.add(record:) 写入；推送时由 record 属性读取以还原带 changeTag 的 CKRecord。
