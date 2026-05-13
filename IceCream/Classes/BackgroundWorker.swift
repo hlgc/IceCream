@@ -66,7 +66,7 @@ final class BackgroundWorker: NSObject {
             rl.add(Port(), forMode: .default)
             while !Thread.current.isCancelled {
                 autoreleasepool {
-                    rl.run(mode: .default, before: Date.distantFuture)
+                    _ = rl.run(mode: .default, before: Date.distantFuture)
                 }
             }
             Thread.exit()
