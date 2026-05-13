@@ -254,6 +254,20 @@ extension SyncEngine {
         databaseManager.resetAllTokens()
     }
 
+    /// 静态方法：清除 IceCream 在 UserDefaults 中保存的所有相关令牌缓存。
+    /// 适用于 iCloud 同步实例销毁后，仍需强行清除状态的场景（如抹掉本地所有数据）。
+    public static func resetAllTokensGlobally(for classes: [Object.Type]) {
+        UserDefaults.standard.removeObject(forKey: IceCreamKey.databaseChangesTokenKey.value)
+        UserDefaults.standard.removeObject(forKey: IceCreamKey.subscriptionIsLocallyCachedKey.value)
+        UserDefaults.standard.removeObject(forKey: syncDateKey)
+        
+        for clazz in classes {
+            let name = clazz.className()
+            UserDefaults.standard.removeObject(forKey: name + IceCreamKey.zoneChangesTokenKey.value)
+            UserDefaults.standard.removeObject(forKey: name + IceCreamKey.hasCustomZoneCreatedKey.value)
+        }
+    }
+
     /// 重置所有变更令牌后全量拉取 CloudKit 数据，适用于：
     /// - 清除本地数据后需从 iCloud 完整恢复
     /// - 重新开启同步时确保获取全部云端记录
