@@ -23,6 +23,13 @@ extension CKRecordRecoverable where Self: Object {
         pendingDirectRefs: inout [(propName: String, refType: String, refKey: AnyHashable)]
     ) -> Self? {
         let o = Self()
+        
+        var existingObj: Self? = nil
+        if let schema = Self.sharedSchema(),
+           let pkValue = primaryKeyForRecordID(recordID: record.recordID, schema: schema) {
+            existingObj = realm.object(ofType: Self.self, forPrimaryKey: pkValue)
+        }
+        
         for prop in o.objectSchema.properties {
             var recordValue: Any?
             
@@ -142,8 +149,12 @@ extension CKRecordRecoverable where Self: Object {
                         recordValue = parsed
                     } else {
                         // CKAsset 存在但 fileURL 无效或复制失败（下载未完成/临时文件已清理）
-                        // 跳过该字段写入，保留本地已有图片，防止 nil 覆盖
-                        continue
+                        // 应该保留本地已有的图片，防止 nil 覆盖
+                        if let existing = existingObj, let existingAsset = existing.value(forKey: prop.name) as? CreamAsset {
+                            recordValue = existingAsset
+                        } else {
+                            continue
+                        }
                     }
                 } else if prop.objectClassName == CreamAsset.className() && record.value(forKey: prop.name) == nil {
                     // 云端该字段显式为 nil（用户主动删除图片），允许清空

@@ -151,9 +151,7 @@ extension DatabaseManager {
             guard let self = self else { return }
             switch result {
             case .success(_):
-                /// 更新同步时间
                 DispatchQueue.main.async {
-                    self.syncDateCallback?(Date())
                     completion?(nil)
                 }
                 break

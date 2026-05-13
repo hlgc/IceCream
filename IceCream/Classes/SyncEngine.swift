@@ -249,6 +249,11 @@ extension SyncEngine {
             completion(.failure(IceCreamError.pushAlreadyInProgress))
             return
         }
+        guard !isFetching else {
+            pushLock.unlock()
+            completion(.failure(IceCreamError.fetchInProgress))
+            return
+        }
         isPushInProgress = true
         pushLock.unlock()
 
@@ -271,6 +276,11 @@ extension SyncEngine {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
                 pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                if totalRecords > 0 {
+                    let now = Date()
+                    self.syncDate = now
+                    self.syncDateCallback?(now)
+                }
                 completion(.success(()))
                 return
             }
@@ -301,6 +311,11 @@ extension SyncEngine {
             completion(.failure(IceCreamError.pushAlreadyInProgress))
             return
         }
+        guard !isFetching else {
+            pushLock.unlock()
+            completion(.failure(IceCreamError.fetchInProgress))
+            return
+        }
         isPushInProgress = true
         pushLock.unlock()
 
@@ -322,6 +337,11 @@ extension SyncEngine {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
                 pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                if totalRecords > 0 {
+                    let now = Date()
+                    self.syncDate = now
+                    self.syncDateCallback?(now)
+                }
                 completion(.success(()))
                 return
             }
@@ -382,11 +402,14 @@ public enum IceCreamKey: String {
 public enum IceCreamError: Error, LocalizedError {
     /// pushAll / pushOffline 已在进行中，重复调用被拒绝
     case pushAlreadyInProgress
+    case fetchInProgress
 
     public var errorDescription: String? {
         switch self {
         case .pushAlreadyInProgress:
             return "A push operation is already in progress. Wait for it to complete before calling pushAll or pushOffline again."
+        case .fetchInProgress:
+            return "A fetch operation is in progress. Wait for it to complete before calling pushAll or pushOffline."
         }
     }
 }
