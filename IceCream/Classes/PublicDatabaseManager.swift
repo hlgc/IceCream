@@ -21,6 +21,7 @@ final class PublicDatabaseManager: DatabaseManager {
     let syncObjects: [Syncable]
     
     var syncDateCallback: ((Date) -> Void)?
+    var isBatchPushing: Bool = false
     
     init(objects: [Syncable], container: CKContainer) {
         self.syncObjects = objects

@@ -21,6 +21,7 @@ final class PrivateDatabaseManager: DatabaseManager {
     let syncObjects: [Syncable]
 
     var syncDateCallback: ((Date) -> Void)?
+    var isBatchPushing: Bool = false
 
     // 是否正在清理云端数据
     private var isDeleteiCloudData: Bool = false

@@ -255,12 +255,13 @@ extension SyncEngine {
             return
         }
         isPushInProgress = true
+        databaseManager.isBatchPushing = true
         pushLock.unlock()
 
         let syncObjects = databaseManager.syncObjects
         if syncObjects.isEmpty {
             progress(0, 0, "无数据需要推送")
-            pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+            pushLock.lock(); isPushInProgress = false; databaseManager.isBatchPushing = false; pushLock.unlock()
             completion(.success(()))
             return
         }
@@ -275,7 +276,7 @@ extension SyncEngine {
         func pushNext(_ index: Int) {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
-                pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                pushLock.lock(); isPushInProgress = false; databaseManager.isBatchPushing = false; pushLock.unlock()
                 if totalRecords > 0 {
                     let now = Date()
                     self.syncDate = now
@@ -317,6 +318,7 @@ extension SyncEngine {
             return
         }
         isPushInProgress = true
+        databaseManager.isBatchPushing = true
         pushLock.unlock()
 
         let syncObjects = databaseManager.syncObjects
@@ -325,7 +327,7 @@ extension SyncEngine {
 
         if totalRecords == 0 {
             progress(0, 0, "无离线数据")
-            pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+            pushLock.lock(); isPushInProgress = false; databaseManager.isBatchPushing = false; pushLock.unlock()
             completion(.success(()))
             return
         }
@@ -336,7 +338,7 @@ extension SyncEngine {
         func pushNext(_ index: Int) {
             if index >= syncObjects.count {
                 progress(totalRecords, totalRecords, "推送完成")
-                pushLock.lock(); isPushInProgress = false; pushLock.unlock()
+                pushLock.lock(); isPushInProgress = false; databaseManager.isBatchPushing = false; pushLock.unlock()
                 if totalRecords > 0 {
                     let now = Date()
                     self.syncDate = now

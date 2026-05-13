@@ -49,12 +49,18 @@ protocol DatabaseManager: AnyObject {
     /// 是否正在执行 fetchChangesInDatabase（用于避免 pushAll 与拉取并发）
     var isFetching: Bool { get }
 
+    var isBatchPushing: Bool { get set }
+
     /// 每收到一条云端记录时的回调，参数为已累计接收数
     var recordFetchedCallback: ((Int) -> Void)? { get set }
 }
 
 extension DatabaseManager {
     var isFetching: Bool { false }
+    var isBatchPushing: Bool {
+        get { return false }
+        set { }
+    }
     func cancelFetch() {}
     var recordFetchedCallback: ((Int) -> Void)? {
         get { return nil }
@@ -152,6 +158,9 @@ extension DatabaseManager {
             switch result {
             case .success(_):
                 DispatchQueue.main.async {
+                    if !self.isBatchPushing {
+                        self.syncDateCallback?(Date())
+                    }
                     completion?(nil)
                 }
                 break
