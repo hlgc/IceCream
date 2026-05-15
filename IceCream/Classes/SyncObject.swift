@@ -117,7 +117,7 @@ extension SyncObject: Syncable {
     /// 云端同步添加
     public func add(record: CKRecord) {
         BackgroundWorker.shared.start {
-            let realm = try! Realm(configuration: self.realmConfiguration)
+            guard let realm = try? Realm(configuration: self.realmConfiguration) else { return }
 
             // 冲突检测：本地存在且 updateAt 比云端 modificationDate 更新时，跳过覆盖（仅更新 ckSystemFields）
             let hasUpdateAtField = T.sharedSchema()?.properties.contains(where: { $0.name == "updateAt" && $0.type == .date }) ?? false
@@ -197,7 +197,7 @@ extension SyncObject: Syncable {
     /// 云端同步删除
     public func delete(recordID: CKRecord.ID) {
         BackgroundWorker.shared.start {
-            let realm = try! Realm(configuration: self.realmConfiguration)
+            guard let realm = try? Realm(configuration: self.realmConfiguration) else { return }
             guard let object = realm.object(ofType: T.self, forPrimaryKey: T.primaryKeyForRecordID(recordID: recordID)) else {
                 // 在本地数据库中找不到
                 return
@@ -224,7 +224,7 @@ extension SyncObject: Syncable {
     /// 了解更多信息:https://realm.io/docs/swift/latest/#writes
     public func registerLocalDatabase() {
         BackgroundWorker.shared.start {
-            let realm = try! Realm(configuration: self.realmConfiguration)
+            guard let realm = try? Realm(configuration: self.realmConfiguration) else { return }
             self.notificationToken = realm.objects(T.self).observe({ [weak self](changes) in
                 guard let self = self else { return }
                 switch changes {
@@ -267,7 +267,7 @@ extension SyncObject: Syncable {
 
         let token = notificationToken
         BackgroundWorker.shared.start { [self] in
-            let realm = try! Realm(configuration: realmConfiguration)
+            guard let realm = try? Realm(configuration: realmConfiguration) else { return }
             for (ownerKey, refs) in pending {
                 guard let owner = realm.object(ofType: T.self, forPrimaryKey: ownerKey),
                       !owner.isInvalidated else { continue }
@@ -295,19 +295,19 @@ extension SyncObject: Syncable {
     }
 
     public func localRecordCount() -> Int {
-        let realm = try! Realm(configuration: realmConfiguration)
+        guard let realm = try? Realm(configuration: realmConfiguration) else { return 0 }
         return realm.objects(T.self).filter { !$0.isDeleted }.count
     }
 
     public func offlineRecordCount(since date: Date) -> Int {
-        let realm = try! Realm(configuration: realmConfiguration)
+        guard let realm = try? Realm(configuration: realmConfiguration) else { return 0 }
         return realm.objects(T.self)
             .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
             .count
     }
 
     public func pushOfflineObjectsToCloudKit(since date: Date, _ callback: ((Error?) -> Void)? = nil) {
-        let realm = try! Realm(configuration: realmConfiguration)
+        guard let realm = try? Realm(configuration: realmConfiguration) else { return }
         let recordsToStore: [CKRecord] = realm.objects(T.self)
             .filter("isDeleted == false AND (createdAt > %@ OR updateAt > %@)", date as NSDate, date as NSDate)
             .map { $0.record }
@@ -317,7 +317,7 @@ extension SyncObject: Syncable {
 
     public func cleanUp() {
         BackgroundWorker.shared.start {
-            let realm = try! Realm(configuration: self.realmConfiguration)
+            guard let realm = try? Realm(configuration: self.realmConfiguration) else { return }
             let objects = realm.objects(T.self).filter { $0.isDeleted }
 
             if objects.count <= 0 {
@@ -338,7 +338,10 @@ extension SyncObject: Syncable {
     }
 
     public func pushLocalObjectsToCloudKit(_ callback: ((Error?) -> Void)? = nil) {
-        let realm = try! Realm(configuration: self.realmConfiguration)
+        guard let realm = try? Realm(configuration: self.realmConfiguration) else {
+            callback?(NSError(domain: "IceCream", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to initialize Realm"]))
+            return
+        }
         let recordsToStore: [CKRecord] = realm.objects(T.self).filter { !$0.isDeleted }.map { $0.record }.filter { record in
             guard record.recordChangeTag != nil else { return true }
             return !record.changedKeys().isEmpty
